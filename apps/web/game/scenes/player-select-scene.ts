@@ -107,10 +107,14 @@ export class PlayerSelectScene extends BaseScene {
   }
 
   #formatAddress(address: string): string {
+    // Detect address type using walletUtils
+    const addressType = walletUtils.detectChainType(address);
+    const typeLabel = addressType.toUpperCase();
+    
     if (address.length <= 10) {
-      return address;
+      return `[${typeLabel}] ${address}`;
     }
-    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+    return `[${typeLabel}] ${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
   }
 
   #createPlayerMenu() {

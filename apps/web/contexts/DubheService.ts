@@ -114,7 +114,7 @@ export class DubheService {
    * @param address The address to analyze
    * @returns 'sui' | 'evm' | 'solana'
    */
-  private detectChainType(address: string): 'sui' | 'evm' | 'solana' {
+  public detectChainType(address: string): 'sui' | 'evm' | 'solana' {
     // Remove 0x prefix if present for length checking
     const cleanAddress = address.startsWith('0x') ? address.slice(2) : address;
 

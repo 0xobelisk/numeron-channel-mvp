@@ -139,12 +139,13 @@ export class Character {
   }
 
   _createAddressLabel(address: string) {
-    // Display full address (no compression as per user requirement)
-    const displayAddress = address;
-
     // Detect address type
     const addressType = this._detectAddressType(address);
     console.log('Address type:', addressType, 'Is current player:', this._isCurrentPlayer);
+
+    // Display address with type prefix
+    const typeLabel = addressType.toUpperCase();
+    const displayAddress = `[${typeLabel}] ${address}`;
 
     // Get gradient colors
     const [startColor, endColor] = this._getAddressGradientColors(addressType);
