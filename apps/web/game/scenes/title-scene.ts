@@ -101,8 +101,7 @@ export class TitleScene extends BaseScene {
 
     // add in fade effects
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, async () => {
-      dataManager.startNewGame();
-      this.scene.start(SCENE_KEYS.WORLD_SCENE);
+      this.scene.start(SCENE_KEYS.PLAYER_SELECT_SCENE);
     });
 
     // play background music

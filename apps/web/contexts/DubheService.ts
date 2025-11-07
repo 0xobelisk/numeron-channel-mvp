@@ -46,6 +46,7 @@ export class DubheService {
   };
   graphqlClient: DubheGraphqlClient;
   grpcClient: DubheGrpcClient;
+  #selectedPlayerAddress: string | null = null;
 
   constructor() {
     let PRIVATEKEY = process.env.NEXT_PUBLIC_PRIVATE_KEY;
@@ -86,9 +87,56 @@ export class DubheService {
    */
   getCurrentAccount() {
     return {
-      address: this.dubhe.getAddress(),
+      address: this.#selectedPlayerAddress || this.dubhe.getAddress(),
       email: '',
     };
+  }
+
+  /**
+   * Set the current player address to control
+   * @param address The player address to use for transactions
+   */
+  setCurrentPlayer(address: string): void {
+    console.log(`[DubheService] Setting current player to: ${address}`);
+    this.#selectedPlayerAddress = address;
+  }
+
+  /**
+   * Get the selected player address
+   * @returns The currently selected player address or null
+   */
+  getSelectedPlayer(): string | null {
+    return this.#selectedPlayerAddress;
+  }
+
+  /**
+   * Detect chain type from address format
+   * @param address The address to analyze
+   * @returns 'sui' | 'evm' | 'solana'
+   */
+  private detectChainType(address: string): 'sui' | 'evm' | 'solana' {
+    // Remove 0x prefix if present for length checking
+    const cleanAddress = address.startsWith('0x') ? address.slice(2) : address;
+
+    // Sui address: 0x + 64 hex characters (32 bytes)
+    if (address.startsWith('0x') && cleanAddress.length === 64 && /^[0-9a-fA-F]+$/.test(cleanAddress)) {
+      return 'sui';
+    }
+
+    // EVM address: 0x + 40 hex characters (20 bytes)
+    if (address.startsWith('0x') && cleanAddress.length === 40 && /^[0-9a-fA-F]+$/.test(cleanAddress)) {
+      return 'evm';
+    }
+
+    // Solana address: Base58 encoded, typically 32-44 characters, no 0x prefix
+    // Base58 uses characters: 1-9, A-Z, a-z excluding 0, O, I, l
+    if (!address.startsWith('0x') && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+      return 'solana';
+    }
+
+    // Default to sui if can't determine
+    console.warn(`Unable to determine chain type for address: ${address}, defaulting to sui`);
+    return 'sui';
   }
 
   public async signAndExecuteTransaction({
@@ -101,7 +149,9 @@ export class DubheService {
     onError?: (error: Error) => void;
   }): Promise<SuiTransactionBlockResponse | null> {
     try {
-      console.log('sui address', this.dubhe.getAddress());
+      // Use selected player address if set, otherwise use dubhe address
+      const sender = this.getCurrentAccount().address;
+      console.log('sui address (selected player):', sender);
       return await this.dubhe.signAndSendTxn({
         tx,
         onSuccess,

@@ -3,6 +3,7 @@ import { BattleScene } from '@/game/scenes/battle-scene';
 import { SCENE_KEYS } from '@/game/scenes/scene-keys';
 import { WorldScene } from '@/game/scenes/world-scene';
 import { TitleScene } from './scenes/title-scene';
+import { PlayerSelectScene } from './scenes/player-select-scene';
 import { OptionsScene } from './scenes/options-scene';
 import { TestScene } from './scenes/test-scene';
 import { MonsterPartyScene } from './scenes/monster-party-scene';
@@ -30,6 +31,7 @@ export default function StartGame(parent: string) {
   game.scene.add(SCENE_KEYS.WORLD_SCENE, WorldScene);
   game.scene.add(SCENE_KEYS.BATTLE_SCENE, BattleScene);
   game.scene.add(SCENE_KEYS.TITLE_SCENE, TitleScene);
+  game.scene.add(SCENE_KEYS.PLAYER_SELECT_SCENE, PlayerSelectScene);
   game.scene.add(SCENE_KEYS.OPTIONS_SCENE, OptionsScene);
   game.scene.add(SCENE_KEYS.TEST_SCENE, TestScene);
   game.scene.add(SCENE_KEYS.MONSTER_PARTY_SCENE, MonsterPartyScene);
