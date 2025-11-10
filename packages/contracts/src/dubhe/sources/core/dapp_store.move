@@ -97,6 +97,30 @@ public(package) fun set_record(
     emit_store_set_record(self.dapp_key, table_id, key_tuple, value_tuple);
 }
 
+/// Set a record
+public(package) fun set_record_without_event(
+    self: &mut DappStore,
+    table_id: String,
+    key_tuple: vector<vector<u8>>,
+    value_tuple: vector<vector<u8>>,
+    offchain: bool
+) {
+    assert!(self.tables.contains(table_id), EInvalidTableId);
+    
+    // Get table data
+    let table = self.tables.borrow_mut(table_id);
+
+    if (!offchain) {
+        // Store data
+        if (table.contains(key_tuple)) {
+            let value = table.borrow_mut(key_tuple);
+            *value = value_tuple;
+        } else {
+            table.add(key_tuple, value_tuple);
+        };
+    };
+}
+
 /// Set a field
 public(package) fun set_field(
     self: &mut DappStore,

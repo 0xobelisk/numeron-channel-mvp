@@ -430,16 +430,18 @@ public fun set_storage<DappKey: copy + drop>(
   table_id: String,
   key_tuple: vector<vector<u8>>,
   value_tuple: vector<vector<u8>>,
-  count: u256,
+  count: u64,
   ctx: &mut TxContext
 ) {
   let dapp_key = type_info::get_type_name_string<DappKey>();
-  dapp_proxy::ensure_has(dh, dapp_key);
-  let (delegator, enabled) = dapp_proxy::get(dh, dapp_key);
-  dapp_not_been_delegated_error(enabled);
-  no_permission_error(delegator == ctx.sender());
-  charge_fee(dh, dapp_key, key_tuple, value_tuple, count);
-  dapp_service::set_record_internal(dh, dapp_key, table_id, key_tuple, value_tuple);
+  // dapp_proxy::ensure_has(dh, dapp_key);
+  // let (delegator, enabled) = dapp_proxy::get(dh, dapp_key);
+  // dapp_not_been_delegated_error(enabled);
+  // no_permission_error(delegator == ctx.sender());
+  // charge_fee(dh, dapp_key, key_tuple, value_tuple, count);
+  let ( bytes_size, fee ) = calculate_bytes_size_and_fee(dh, dapp_key, key_tuple, value_tuple, count as u256);
+  dapp_service::set_record_without_event_internal(dh, dapp_key, table_id, key_tuple, value_tuple);
+  dubhe::storage_submit::set(dh, dapp_key, key_tuple, value_tuple, fee);
 }
 
 #[test_only]

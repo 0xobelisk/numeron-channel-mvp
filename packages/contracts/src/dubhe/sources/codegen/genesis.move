@@ -48,6 +48,8 @@
 
   use dubhe::asset_swap;
 
+  use dubhe::storage_submit;
+
   public entry fun run(dapp_hub: &mut DappHub, clock: &Clock, ctx: &mut TxContext) {
     // Create Dapp
     let dapp_key = dapp_key::new();
@@ -72,6 +74,7 @@
     asset_add_liquidity::register_table(dapp_hub, ctx);
     asset_remove_liquidity::register_table(dapp_hub, ctx);
     asset_swap::register_table(dapp_hub, ctx);
+    storage_submit::register_table(dapp_hub, ctx);
     // Logic that needs to be automated once the contract is deployed
     dubhe::deploy_hook::run(dapp_hub, ctx);
   }
@@ -82,8 +85,6 @@
     dapp_system::upgrade_dapp(dapp_hub, dapp_key, new_package_id, new_version, ctx);
     // Register new tables
     // ==========================================
-    asset_add_liquidity::register_table(dapp_hub, ctx);
-    asset_remove_liquidity::register_table(dapp_hub, ctx);
-// ==========================================
+    // ==========================================
   }
 }

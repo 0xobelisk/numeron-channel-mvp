@@ -78,6 +78,22 @@ module dubhe::dapp_service {
         dapp_store.set_record(table_id, key_tuple, value_tuple, table_metadata.get_offchain());
     }
 
+       /// Set a record
+    public(package) fun set_record_without_event_internal(
+        self: &mut DappHub,
+        dapp_key: String,
+        table_id: String,
+        key_tuple: vector<vector<u8>>,
+        value_tuple: vector<vector<u8>>
+    ) {
+        let dapp_store = self.dapp_stores.borrow_mut(dapp_key);
+        let table_metadata = dapp_store.get_table_metadatas().borrow(table_id);
+        assert!(dapp_store.get_dapp_key() == dapp_key, ENoPermissionPackageId);
+
+        // Set record
+        dapp_store.set_record_without_event(table_id, key_tuple, value_tuple, table_metadata.get_offchain());
+    }
+
     /// Set a record
     public(package) fun set_record<DappKey: copy + drop>(
         self: &mut DappHub,
