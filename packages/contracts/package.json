@@ -22,9 +22,9 @@
     "validate": "pnpm format:check && pnpm type-check"
   },
   "dependencies": {
-    "@0xobelisk/sui-cli": "^1.2.0-pre.86",
-    "@0xobelisk/sui-client": "^1.2.0-pre.86",
-    "@0xobelisk/sui-common": "^1.2.0-pre.86",
+    "@0xobelisk/sui-cli": "^1.2.0-pre.88",
+    "@0xobelisk/sui-client": "^1.2.0-pre.88",
+    "@0xobelisk/sui-common": "^1.2.0-pre.88",
     "dotenv": "^16.4.5",
     "jotai": "^1.7.2",
     "next": "15.1.6",

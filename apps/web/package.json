@@ -24,11 +24,11 @@
     "prod:mainnet": "pnpm account:gen && pnpm check-balance mainnet"
   },
   "dependencies": {
-    "@0xobelisk/graphql-client": "^1.2.0-pre.86",
-    "@0xobelisk/grpc-client": "^1.2.0-pre.86",
-    "@0xobelisk/sui-client": "^1.2.0-pre.86",
-    "@0xobelisk/sui-cli": "^1.2.0-pre.86",
-    "@0xobelisk/sui-common": "^1.2.0-pre.86",
+    "@0xobelisk/graphql-client": "^1.2.0-pre.88",
+    "@0xobelisk/grpc-client": "^1.2.0-pre.88",
+    "@0xobelisk/sui-client": "^1.2.0-pre.88",
+    "@0xobelisk/sui-cli": "^1.2.0-pre.88",
+    "@0xobelisk/sui-common": "^1.2.0-pre.88",
     "contracts": "workspace:*",
     "@mysten/dapp-kit": "0.16.14",
     "@mysten/sui": "1.35.0",

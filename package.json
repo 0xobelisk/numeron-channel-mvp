@@ -17,8 +17,8 @@
   },
   "devDependencies": {
     "mprocs": "^0.7.1",
-    "@0xobelisk/sui-cli": "1.2.0-pre.86",
-    "@0xobelisk/sui-common": "1.2.0-pre.86",
+    "@0xobelisk/sui-cli": "1.2.0-pre.88",
+    "@0xobelisk/sui-common": "1.2.0-pre.88",
     "@workspace/eslint-config": "workspace:*",
     "@workspace/typescript-config": "workspace:*",
     "prettier": "^3.2.5",
