@@ -36,20 +36,20 @@ importers:
   apps/web:
     dependencies:
       '@0xobelisk/graphql-client':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
+        specifier: ^1.2.0-pre.88
+        version: 1.2.0-pre.88(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
       '@0xobelisk/grpc-client':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86
+        specifier: ^1.2.0-pre.88
+        version: 1.2.0-pre.88
       '@0xobelisk/sui-cli':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86(@types/node@20.19.24)
+        specifier: ^1.2.0-pre.88
+        version: 1.2.0-pre.88(@types/node@20.19.24)
       '@0xobelisk/sui-client':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86(typescript@5.9.3)
+        specifier: ^1.2.0-pre.88
+        version: 1.2.0-pre.88(typescript@5.9.3)
       '@0xobelisk/sui-common':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86
+        specifier: ^1.2.0-pre.88
+        version: 1.2.0-pre.88
       '@ai-sdk/deepseek':
         specifier: ^0.2.14
         version: 0.2.16(zod@3.25.76)
@@ -375,16 +375,16 @@ packages:
       graphql: ^15.5.0 || ^16.0.0 || ^17.0.0
       typescript: ^5.0.0
 
-  '@0xobelisk/graphql-client@1.2.0-pre.86':
-    resolution: {integrity: sha512-nkXqywuhwIHchAjRIkDbY7PiyeGxCUP76tuWOlOdc8CJj1a7KmkdgWAloQrQrqCWL0IFx5E9wFimgZMpwyKSqA==}
+  '@0xobelisk/graphql-client@1.2.0-pre.88':
+    resolution: {integrity: sha512-kuh3GUfSxKEaG4yKLbwMwOgMfF0DzNq2JpDOP1Gec7DxoVF5sv8y9IyZ/I4Gt6RJtZQxpYK7FWoUjZOm0kbgBw==}
     engines: {node: '>=22.0.0'}
 
-  '@0xobelisk/grpc-client@1.2.0-pre.86':
-    resolution: {integrity: sha512-p08FHxM6hDOuMXCYkEo0485+Na/dMZEMrUcnB3u1PrXubF+KO/ELgHw/RtKM2N7bg0ZfjIds1Tf5vAAJaT+U/A==}
+  '@0xobelisk/grpc-client@1.2.0-pre.88':
+    resolution: {integrity: sha512-DNp7UH1L4yv06nISpjiPwxqyy0PzeYGtIvhizXYwVVM5Iht5I+K3uWp+WJH6eYb+ZEIuYO22mpVUibvo8b8vow==}
     engines: {node: '>=22.0.0'}
 
-  '@0xobelisk/sui-cli@1.2.0-pre.86':
-    resolution: {integrity: sha512-LHK8wHxbyZq8j7ZlcTvfzoynu1E53+j3GpCJBmgDh4RTTlF/ZC1f7qBlF1Eln3zxSBF1HC4Ji2ygmfHqL1h75Q==}
+  '@0xobelisk/sui-cli@1.2.0-pre.88':
+    resolution: {integrity: sha512-rllpGuKzsoTluug9URPguQKsCBLpRZsZDeyQxtR/m/BbWAOBtdwJyuwFKsiaVPAxpDkDVu3bs1lwEXbof2syhA==}
     engines: {node: '>=22.0.0'}
     hasBin: true
 
@@ -4881,7 +4881,7 @@ snapshots:
       graphql: 16.12.0
       typescript: 5.9.3
 
-  '@0xobelisk/graphql-client@1.2.0-pre.86(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)':
+  '@0xobelisk/graphql-client@1.2.0-pre.88(@types/react@19.2.2)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(typescript@5.9.3)':
     dependencies:
       '@apollo/client': 3.14.0(@types/react@19.2.2)(graphql@16.12.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@graphql-typed-document-node/core': 3.2.0(graphql@16.12.0)
@@ -4908,16 +4908,20 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@0xobelisk/grpc-client@1.2.0-pre.86':
+  '@0xobelisk/grpc-client@1.2.0-pre.88':
     dependencies:
       '@protobuf-ts/grpcweb-transport': 2.11.1
       '@protobuf-ts/runtime': 2.11.1
       '@protobuf-ts/runtime-rpc': 2.11.1
 
+<<<<<<< HEAD
   '@0xobelisk/sui-cli@1.2.0-pre.86(@types/node@20.19.24)':
+=======
+  '@0xobelisk/sui-cli@1.2.0-pre.88':
+>>>>>>> ae5b6e53e6e968401b94f6f6992a0699665e767d
     dependencies:
-      '@0xobelisk/sui-client': 1.2.0-pre.86(typescript@5.9.3)
-      '@0xobelisk/sui-common': 1.2.0-pre.86
+      '@0xobelisk/sui-client': 1.2.0-pre.88(typescript@5.9.3)
+      '@0xobelisk/sui-common': 1.2.0-pre.88
       '@mysten/sui': 1.35.0(typescript@5.9.3)
       '@types/wait-on': 5.3.4
       axios: 1.13.2
@@ -4980,10 +4984,17 @@ snapshots:
       - debug
       - supports-color
 
+<<<<<<< HEAD
   '@0xobelisk/sui-cli@1.2.0-pre.94(@types/node@18.19.130)':
     dependencies:
       '@0xobelisk/sui-client': 1.2.0-pre.94(typescript@5.9.3)
       '@0xobelisk/sui-common': 1.2.0-pre.94
+=======
+  '@0xobelisk/sui-cli@1.2.0-pre.88(@types/node@18.19.130)':
+    dependencies:
+      '@0xobelisk/sui-client': 1.2.0-pre.88(typescript@5.9.3)
+      '@0xobelisk/sui-common': 1.2.0-pre.88
+>>>>>>> ae5b6e53e6e968401b94f6f6992a0699665e767d
       '@mysten/sui': 1.35.0(typescript@5.9.3)
       '@types/wait-on': 5.3.4
       axios: 1.13.2
@@ -5013,7 +5024,44 @@ snapshots:
       - debug
       - supports-color
 
+<<<<<<< HEAD
   '@0xobelisk/sui-client@1.2.0-pre.86(typescript@5.9.3)':
+=======
+  '@0xobelisk/sui-cli@1.2.0-pre.88(@types/node@20.19.24)':
+    dependencies:
+      '@0xobelisk/sui-client': 1.2.0-pre.88(typescript@5.9.3)
+      '@0xobelisk/sui-common': 1.2.0-pre.88
+      '@mysten/sui': 1.35.0(typescript@5.9.3)
+      '@types/wait-on': 5.3.4
+      axios: 1.13.2
+      chalk: 5.6.2
+      child_process: 1.0.2
+      chokidar: 3.6.0
+      cli-progress: 3.12.0
+      cli-table3: 0.6.5
+      dotenv: 16.6.1
+      ejs: 3.1.10
+      execa: 7.2.0
+      glob: 8.1.0
+      http-proxy-agent: 7.0.2
+      https-proxy-agent: 7.0.6
+      inquirer: 9.3.8(@types/node@20.19.24)
+      ora: 5.4.1
+      path: 0.12.7
+      typescript: 5.9.3
+      wait-on: 7.2.0
+      yargs: 17.7.2
+      zod: 3.25.76
+      zod-validation-error: 1.5.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - '@types/node'
+      - debug
+      - supports-color
+
+  '@0xobelisk/sui-client@1.2.0-pre.88(typescript@5.9.3)':
+>>>>>>> ae5b6e53e6e968401b94f6f6992a0699665e767d
     dependencies:
       '@mysten/bcs': 1.6.3
       '@mysten/sui': 1.35.0(typescript@5.9.3)
@@ -5039,6 +5087,7 @@ snapshots:
       - '@gql.tada/vue-support'
       - typescript
 
+<<<<<<< HEAD
   '@0xobelisk/sui-client@1.2.0-pre.94(typescript@5.9.3)':
     dependencies:
       '@mysten/bcs': 1.6.3
@@ -5066,6 +5115,9 @@ snapshots:
       - typescript
 
   '@0xobelisk/sui-common@1.2.0-pre.86':
+=======
+  '@0xobelisk/sui-common@1.2.0-pre.88':
+>>>>>>> ae5b6e53e6e968401b94f6f6992a0699665e767d
     dependencies:
       chalk: 5.6.2
       debug: 4.4.3
