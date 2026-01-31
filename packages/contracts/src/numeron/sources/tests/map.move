@@ -9,9 +9,9 @@ use dubhe::address_system;
 
 #[test]
 fun move_position_should_work(){
-        let sui_player = @0xc84ba871346dc957269d05b389df50e56ab0f57b466d1084edf734a323993b47;
-        let evm_player = b"0xcdd077770ceb5271e42289ee1a9b3a19442f445d";
-        let solana_player = b"3vy8k1NAc3Q9EPvqrAuS4DG4qwbgVqfxznEdtcrL743L";
+        let sui_player = @0xbd1db4accf9ccb64e3fce45d4d1ae1576f926a541ce098f8cb5f79fe6a7a585b;
+        let evm_player = b"f464dab2f6386ea829f6a15cbe6a6267d01f91be";
+        let solana_player = b"FoaSmLuvwmWWYTqnQQoE6wpAALQczJqgebhtV1v67DLm";
         let mut scenario  = test_scenario::begin(sui_player);
         let mut dapp_hub = init_test::deploy_dapp_for_testing(&mut scenario);
 

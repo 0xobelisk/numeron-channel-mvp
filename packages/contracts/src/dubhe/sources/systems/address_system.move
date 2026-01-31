@@ -183,7 +183,7 @@ fun div_mod_58(num: &mut vector<u8>): u64 {
 }
 
 /// Get original address format based on tx_hash detection
-/// Returns: EVM (0x...), Solana (Base58), or SUI (0x...) format
+/// Returns: EVM (hex without 0x), Solana (Base58), or SUI (hex without 0x) format
 public fun ensure_origin(ctx: &TxContext): String { 
     let sui_address = ctx.sender();
     let address_bytes = address::to_bytes(sui_address);
@@ -198,16 +198,12 @@ public fun ensure_origin(ctx: &TxContext): String {
             j = j + 1;
         };
         let hex_bytes = hex::encode(evm_bytes);
-        let mut result_bytes = b"0x";
-        result_bytes.append(hex_bytes);
-        result_bytes.to_ascii_string()
+        hex_bytes.to_ascii_string()
     } else if (chain_type == 2) {
         base58_encode(address_bytes)
     } else {
         let hex_bytes = hex::encode(address_bytes);
-        let mut result_bytes = b"0x";
-        result_bytes.append(hex_bytes);
-        result_bytes.to_ascii_string()
+        hex_bytes.to_ascii_string()
     }
 }
 
@@ -233,7 +229,7 @@ public fun is_sui_address(ctx: &TxContext): bool {
 
 #[test_only]
 /// Setup test scenario with EVM context
-/// Input: EVM address as byte string, e.g., b"0xcdd077770ceb5271e42289ee1a9b3a19442f445d"
+/// Input: EVM address as byte string, e.g., b"0x9168765EE952de7C6f8fC6FaD5Ec209B960b7622"
 /// Format: [0xDB][0xDB][0x01][0xE1][...28 bytes...]
 public fun setup_evm_scenario(scenario: &mut test_scenario::Scenario, evm_address_bytes: vector<u8>) {
     use std::ascii;

@@ -9,11 +9,10 @@
   use dubhe::dapp_service::DappHub;
   use numeron::map_system;
   use std::ascii::string;
-  use numeron::tx_digest;
   public(package) fun run(dapp_hub: &mut DappHub, ctx: &mut TxContext) { 
-    map_system::force_register(dapp_hub, string(b"0xbd1db4accf9ccb64e3fce45d4d1ae1576f926a541ce098f8cb5f79fe6a7a585b"), 2, 1, ctx);
-    map_system::force_register(dapp_hub, string(b"0xe36b40d4452331be54ce9a2e2a72d7454d02887b124c989c2e41db6e50ffa324"), 10, 1, ctx);
-    map_system::force_register(dapp_hub, string(b"0xf464dab2f6386ea829f6a15cbe6a6267d01f91be"), 3, 5, ctx);
+    map_system::force_register(dapp_hub, string(b"bd1db4accf9ccb64e3fce45d4d1ae1576f926a541ce098f8cb5f79fe6a7a585b"), 2, 1, ctx);
+    map_system::force_register(dapp_hub, string(b"e36b40d4452331be54ce9a2e2a72d7454d02887b124c989c2e41db6e50ffa324"), 10, 1, ctx);
+    map_system::force_register(dapp_hub, string(b"f464dab2f6386ea829f6a15cbe6a6267d01f91be"), 3, 5, ctx);
     map_system::force_register(dapp_hub, string(b"FoaSmLuvwmWWYTqnQQoE6wpAALQczJqgebhtV1v67DLm"), 7, 3, ctx);
   }
 

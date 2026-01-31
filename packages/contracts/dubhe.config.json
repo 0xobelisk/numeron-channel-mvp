@@ -5,18 +5,13 @@
       "position": {
         "fields": [
           {
-            "player": "String"
-          },
-          {
             "x": "u64"
           },
           {
             "y": "u64"
           }
         ],
-        "keys": [
-          "player"
-        ],
+        "keys": [],
         "offchain": false
       }
     },
@@ -80,8 +75,8 @@
       ]
     }
   ],
-  "package_id": "0x67c10b954c744c13c06fbe0f0cab48ff6c6b125286eefeaed2cf7718441dd680",
-  "dubhe_object_id": "0x972378e492d34bccc2f7b0589fe63d19d5c680bfead31e84bc851fb3d59f0af4",
-  "original_dubhe_package_id": "0x1ecc1b6ecd677108919855445a38a808a5c41f083069555105cb3315a8f9e077",
-  "start_checkpoint": "23499"
+  "original_package_id": "0x8e1cee0f7b0fa04608b433cddc2aa8f0b64ce5c7894ce9e75a80a1258f81cccd",
+  "dubhe_object_id": "0x941c22f3aa1ecfa780a47475e18d686d4f7ade77f9f13d3c6012841954ecc7bb",
+  "original_dubhe_package_id": "0x20b4e4713c1cd3562cd4a9e21dcb968e8276965a75a4c5bbfa5e2f9bc0481b09",
+  "start_checkpoint": "1715"
 }

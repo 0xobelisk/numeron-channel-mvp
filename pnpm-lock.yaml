@@ -9,11 +9,11 @@ importers:
   .:
     devDependencies:
       '@0xobelisk/sui-cli':
-        specifier: 1.2.0-pre.86
-        version: 1.2.0-pre.86
+        specifier: 1.2.0-pre.94
+        version: 1.2.0-pre.94
       '@0xobelisk/sui-common':
-        specifier: 1.2.0-pre.86
-        version: 1.2.0-pre.86
+        specifier: 1.2.0-pre.94
+        version: 1.2.0-pre.94
       '@workspace/eslint-config':
         specifier: workspace:*
         version: link:packages/eslint-config
@@ -154,14 +154,14 @@ importers:
   packages/contracts:
     dependencies:
       '@0xobelisk/sui-cli':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86(@types/node@18.19.130)
+        specifier: ^1.2.0-pre.94
+        version: 1.2.0-pre.94(@types/node@18.19.130)
       '@0xobelisk/sui-client':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86(typescript@5.9.3)
+        specifier: ^1.2.0-pre.94
+        version: 1.2.0-pre.94(typescript@5.9.3)
       '@0xobelisk/sui-common':
-        specifier: ^1.2.0-pre.86
-        version: 1.2.0-pre.86
+        specifier: ^1.2.0-pre.94
+        version: 1.2.0-pre.94
       dotenv:
         specifier: ^16.4.5
         version: 16.6.1
@@ -388,12 +388,25 @@ packages:
     engines: {node: '>=22.0.0'}
     hasBin: true
 
+  '@0xobelisk/sui-cli@1.2.0-pre.94':
+    resolution: {integrity: sha512-l87bOCChmPk0O+65XXe5ezqv1FIfiR9tc35sisCsLiruobXosCGNU55/aiiTd5u02jqGh+bLz4AqyaGmknyU6g==}
+    engines: {node: '>=22.0.0'}
+    hasBin: true
+
   '@0xobelisk/sui-client@1.2.0-pre.86':
     resolution: {integrity: sha512-Ro0Mm69gN15LoGQMaO0d4JtuvR5p48VwmG56hKv07cur0xJBsVwGtmXb47u+MlLyaclfCfAwWIpVK1HKzG5ArA==}
     engines: {node: '>=22.0.0'}
 
+  '@0xobelisk/sui-client@1.2.0-pre.94':
+    resolution: {integrity: sha512-g/JECT8dOT8kGYFhVdgHChCFyiqj5e+Vqhx4XKD1dbQhu0Px+f5facLPnVAgGS+4x6baAtQzXwE6N8JxiiLF4A==}
+    engines: {node: '>=22.0.0'}
+
   '@0xobelisk/sui-common@1.2.0-pre.86':
     resolution: {integrity: sha512-+hR5ee2g8v7Oikr1zXWCe7che4LYQbOHfHteApYUCCCUti4yGxRY916eTAiZ/FkhI8EHrrs2O86I/mDUt0z1HQ==}
+    engines: {node: '>=22.0.0'}
+
+  '@0xobelisk/sui-common@1.2.0-pre.94':
+    resolution: {integrity: sha512-LI3QCDclxlnjD0pqSfqpyLqr9OoDLJghW2ULr1MPrTtqki/29u8JoZYh1qO/0IMzM/PSEbbRJt+RPe59fgA2rg==}
     engines: {node: '>=22.0.0'}
 
   '@adraffy/ens-normalize@1.11.0':
@@ -4901,10 +4914,43 @@ snapshots:
       '@protobuf-ts/runtime': 2.11.1
       '@protobuf-ts/runtime-rpc': 2.11.1
 
-  '@0xobelisk/sui-cli@1.2.0-pre.86':
+  '@0xobelisk/sui-cli@1.2.0-pre.86(@types/node@20.19.24)':
     dependencies:
       '@0xobelisk/sui-client': 1.2.0-pre.86(typescript@5.9.3)
       '@0xobelisk/sui-common': 1.2.0-pre.86
+      '@mysten/sui': 1.35.0(typescript@5.9.3)
+      '@types/wait-on': 5.3.4
+      axios: 1.13.2
+      chalk: 5.6.2
+      child_process: 1.0.2
+      chokidar: 3.6.0
+      cli-progress: 3.12.0
+      cli-table3: 0.6.5
+      dotenv: 16.6.1
+      ejs: 3.1.10
+      execa: 7.2.0
+      glob: 8.1.0
+      http-proxy-agent: 7.0.2
+      https-proxy-agent: 7.0.6
+      inquirer: 9.3.8(@types/node@20.19.24)
+      ora: 5.4.1
+      path: 0.12.7
+      typescript: 5.9.3
+      wait-on: 7.2.0
+      yargs: 17.7.2
+      zod: 3.25.76
+      zod-validation-error: 1.5.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - '@types/node'
+      - debug
+      - supports-color
+
+  '@0xobelisk/sui-cli@1.2.0-pre.94':
+    dependencies:
+      '@0xobelisk/sui-client': 1.2.0-pre.94(typescript@5.9.3)
+      '@0xobelisk/sui-common': 1.2.0-pre.94
       '@mysten/sui': 1.35.0(typescript@5.9.3)
       '@types/wait-on': 5.3.4
       axios: 1.13.2
@@ -4934,10 +4980,10 @@ snapshots:
       - debug
       - supports-color
 
-  '@0xobelisk/sui-cli@1.2.0-pre.86(@types/node@18.19.130)':
+  '@0xobelisk/sui-cli@1.2.0-pre.94(@types/node@18.19.130)':
     dependencies:
-      '@0xobelisk/sui-client': 1.2.0-pre.86(typescript@5.9.3)
-      '@0xobelisk/sui-common': 1.2.0-pre.86
+      '@0xobelisk/sui-client': 1.2.0-pre.94(typescript@5.9.3)
+      '@0xobelisk/sui-common': 1.2.0-pre.94
       '@mysten/sui': 1.35.0(typescript@5.9.3)
       '@types/wait-on': 5.3.4
       axios: 1.13.2
@@ -4953,39 +4999,6 @@ snapshots:
       http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6
       inquirer: 9.3.8(@types/node@18.19.130)
-      ora: 5.4.1
-      path: 0.12.7
-      typescript: 5.9.3
-      wait-on: 7.2.0
-      yargs: 17.7.2
-      zod: 3.25.76
-      zod-validation-error: 1.5.0(zod@3.25.76)
-    transitivePeerDependencies:
-      - '@gql.tada/svelte-support'
-      - '@gql.tada/vue-support'
-      - '@types/node'
-      - debug
-      - supports-color
-
-  '@0xobelisk/sui-cli@1.2.0-pre.86(@types/node@20.19.24)':
-    dependencies:
-      '@0xobelisk/sui-client': 1.2.0-pre.86(typescript@5.9.3)
-      '@0xobelisk/sui-common': 1.2.0-pre.86
-      '@mysten/sui': 1.35.0(typescript@5.9.3)
-      '@types/wait-on': 5.3.4
-      axios: 1.13.2
-      chalk: 5.6.2
-      child_process: 1.0.2
-      chokidar: 3.6.0
-      cli-progress: 3.12.0
-      cli-table3: 0.6.5
-      dotenv: 16.6.1
-      ejs: 3.1.10
-      execa: 7.2.0
-      glob: 8.1.0
-      http-proxy-agent: 7.0.2
-      https-proxy-agent: 7.0.6
-      inquirer: 9.3.8(@types/node@20.19.24)
       ora: 5.4.1
       path: 0.12.7
       typescript: 5.9.3
@@ -5026,7 +5039,55 @@ snapshots:
       - '@gql.tada/vue-support'
       - typescript
 
+  '@0xobelisk/sui-client@1.2.0-pre.94(typescript@5.9.3)':
+    dependencies:
+      '@mysten/bcs': 1.6.3
+      '@mysten/sui': 1.35.0(typescript@5.9.3)
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      '@scure/bip39': 1.6.0
+      '@suchipi/femver': 1.0.0
+      '@types/pluralize': 0.0.33
+      assert: 2.1.0
+      bech32: 2.0.0
+      colorts: 0.1.63
+      husky: 8.0.3
+      keccak256: 1.0.6
+      pluralize: 8.0.0
+      process: 0.11.10
+      superstruct: 1.0.4
+      tmp: 0.2.5
+      ts-retry-promise: 0.7.1
+      tweetnacl: 1.0.3
+      valibot: 0.36.0
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - typescript
+
   '@0xobelisk/sui-common@1.2.0-pre.86':
+    dependencies:
+      chalk: 5.6.2
+      debug: 4.4.3
+      dotenv: 16.6.1
+      ejs: 3.1.10
+      esbuild: 0.17.19
+      execa: 7.2.0
+      find-up: 6.3.0
+      glob: 8.1.0
+      path: 0.12.7
+      prettier: 3.3.3
+      prettier-plugin-move-js: 0.0.5
+      prettier-plugin-rust: 0.1.9
+      prettier-plugin-solidity: 1.4.3(prettier@3.3.3)
+      typescript: 5.9.3
+      yargs: 17.7.2
+      zod: 3.25.76
+      zod-validation-error: 1.5.0(zod@3.25.76)
+    transitivePeerDependencies:
+      - supports-color
+
+  '@0xobelisk/sui-common@1.2.0-pre.94':
     dependencies:
       chalk: 5.6.2
       debug: 4.4.3
@@ -8282,7 +8343,7 @@ snapshots:
 
   inquirer@9.3.8:
     dependencies:
-      '@inquirer/external-editor': 1.0.2(@types/node@20.19.24)
+      '@inquirer/external-editor': 1.0.2(@types/node@22.19.0)
       '@inquirer/figures': 1.0.14
       ansi-escapes: 4.3.2
       cli-width: 4.1.0

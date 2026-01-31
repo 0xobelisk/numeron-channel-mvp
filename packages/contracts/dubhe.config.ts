@@ -10,11 +10,9 @@ export const dubheConfig = {
   resources: {
     position: { 
       fields: {
-        player: 'String',
         x: 'u64',
         y: 'u64',
       },
-      keys: ['player'],
     },
     item_dropped: {
       offchain: true,

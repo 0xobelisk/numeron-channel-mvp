@@ -10,12 +10,11 @@ use numeron::errors;
 use numeron::item_dropped;
 use numeron::item_type;
 use std::ascii::string;
-use numeron::tx_digest;
 
 public entry fun force_register(dapp_hub: &mut DappHub, player: String, x: u64, y: u64, ctx: &mut TxContext) {
     dapp_system::ensure_dapp_admin<DappKey>(dapp_hub, ctx.sender());
-    position::ensure_not_has(dapp_hub, player);
-    position::set(dapp_hub, player, x, y);
+    position::ensure_has_not(dapp_hub, player);
+    position::set(dapp_hub, player, x, y, ctx);
 }
 
 public entry fun move_position(dapp_hub: &mut DappHub, direction: u8, ctx: &mut TxContext) {
@@ -47,6 +46,6 @@ public entry fun move_position(dapp_hub: &mut DappHub, direction: u8, ctx: &mut 
         },
         _ => errors::invalid_direction_error(false),
     };
-    position::set(dapp_hub, player, x, y);
-    item_dropped::set(dapp_hub, player, item_type)
+    position::set(dapp_hub, player, x, y, ctx);
+    item_dropped::set(dapp_hub, player, item_type, ctx);
 }
