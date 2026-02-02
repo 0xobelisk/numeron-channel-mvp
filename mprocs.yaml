@@ -2,7 +2,7 @@ scrollback: 10000
 procs:
   client:
     cwd: apps/web
-    shell: pnpm dubhe wait --local-indexer && pnpm prod:localnet && pnpm dev
+    shell: pnpm dubhe wait --local-indexer && pnpm dev
   contracts:
     cwd: packages/contracts
     shell: pnpm prod:testnet
