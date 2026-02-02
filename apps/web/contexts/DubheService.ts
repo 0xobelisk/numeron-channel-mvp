@@ -5,13 +5,12 @@ import {
   SuiMoveNormalizedModules,
   SuiTransactionBlockResponse,
   Transaction,
+  bcs,
 } from '@0xobelisk/sui-client';
 import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from 'contracts/deployment';
 import { InventoryItem, ITEM_EFFECT, ItemCategory, LOCATION_TYPE, Monster } from '@/game/types/typedef';
 import { PlayerLocation } from '@/game/utils/data-manager';
 import { TILE_SIZE } from '@/game/config';
-import { DubheGraphqlClient } from '@0xobelisk/graphql-client';
-import { DubheGrpcClient } from '@0xobelisk/grpc-client';
 import contractMetadata from 'contracts/metadata.json';
 import dubheMetadata from 'contracts/dubhe.config.json';
 
@@ -44,8 +43,6 @@ export class DubheService {
     ws: string;
     grpc: string;
   };
-  graphqlClient: DubheGraphqlClient;
-  grpcClient: DubheGrpcClient;
   #selectedPlayerAddress: string | null = null;
 
   constructor() {
@@ -68,17 +65,10 @@ export class DubheService {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: NETWORK === 'localnet' ? PRIVATEKEY : undefined,
+      secretKey: PRIVATEKEY
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
-    this.graphqlClient = new DubheGraphqlClient({
-      endpoint: this.endpoint.http,
-      dubheMetadata,
-    });
-    this.grpcClient = new DubheGrpcClient({
-      baseUrl: this.endpoint.grpc,
-    });
   }
 
   /**
@@ -164,14 +154,22 @@ export class DubheService {
   }
 
   async getPlayerPosition(): Promise<{ x: number; y: number; location: PlayerLocation }> {
-    const playerPosition = await this.graphqlClient.getTableByCondition('position', {
-      player: this.getCurrentAccount().address,
+    const playerPositionData = await this.dubhe.queryChannelTable({
+      table: 'position',
+      key: [],
     });
 
-    if (playerPosition) {
+    if (playerPositionData && playerPositionData.data) {
+      // Parse x and y coordinates using bcs
+      const xData = Uint8Array.from(playerPositionData.data[0]);
+      const yData = Uint8Array.from(playerPositionData.data[1]);
+      
+      const x = bcs.u64().parse(xData);
+      const y = bcs.u64().parse(yData);
+      
       return {
-        x: Number(playerPosition.x) * TILE_SIZE,
-        y: Number(playerPosition.y) * TILE_SIZE,
+        x: Number(x) * TILE_SIZE,
+        y: Number(y) * TILE_SIZE,
         location: LOCATION_TYPE[0],
       };
     }

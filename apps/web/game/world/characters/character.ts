@@ -5,6 +5,7 @@ import { Coordinate } from '../../types/typedef';
 import { Dubhe, SuiTransactionBlockResponse, Transaction, TransactionResult } from '@0xobelisk/sui-client';
 import { walletUtils } from '../../utils/wallet-utils';
 import { DUBHE_SCHEMA_ID } from 'contracts/deployment';
+import { nonceManager } from '../../utils/nonce-manager';
 
 export interface CharacterIdleFrameConfig {
   LEFT: number;
@@ -407,9 +408,9 @@ export class Character {
       if (this.dubhe) {
         this._isChainMovementPending = true;
 
-        // 准备交易
-        const stepTxB = new Transaction();
-        stepTxB.setGasBudget(10000000);
+        // Prepare transaction
+        const moveUpTx = new Transaction();
+        moveUpTx.setGasBudget(10000000);
 
         let direction: number;
         switch (this._direction) {
@@ -427,21 +428,26 @@ export class Character {
             break;
         }
 
-        // 构建交易
-        console.log('dubhe shcmeid', DUBHE_SCHEMA_ID);
+        // Build transaction
+        console.log('[Character] Building move transaction, direction:', direction, 'schema:', DUBHE_SCHEMA_ID);
         await this.dubhe.tx.map_system.move_position({
-          tx: stepTxB,
-          params: [stepTxB.object(DUBHE_SCHEMA_ID), stepTxB.pure.u8(direction)],
+          tx: moveUpTx,
+          params: [moveUpTx.object(DUBHE_SCHEMA_ID), moveUpTx.pure.u8(direction)],
           isRaw: true,
         });
 
-        // 乐观更新：立即开始播放动画，同时在后台处理交易
+        // Get nonce for channel transaction
+        const nonce = await nonceManager.getAndIncrement();
+        console.log('[Character] Using nonce:', nonce, 'for move transaction');
+        console.log('[Character] Transaction data:', JSON.stringify(moveUpTx.getData()));
+
+        // Optimistic update: start animation immediately while transaction processes in background
         const animationDuration = 200;
 
-        // 先立即播放动画，给用户即时反馈
+        // Start animation immediately for user feedback
         const animationPromise = new Promise<void>((resolve, reject) => {
           if (!this._scene || !this._scene.add || typeof this._scene.add.tween !== 'function') {
-            console.warn('场景或动画功能不可用，可能是场景正在切换');
+            console.warn('Scene or animation unavailable, scene may be transitioning');
             resolve();
             return;
           }
@@ -470,40 +476,42 @@ export class Character {
           });
         });
 
-        // 同时发送交易（不阻塞动画）
+        // Send transaction to channel (non-blocking animation)
         let transactionSuccess = false;
-        const transactionPromise = walletUtils.signAndExecuteTransaction({
-          tx: stepTxB,
-          onSuccess: (result: any) => {
-            console.log(`Move transaction successful:`, result);
+        const transactionPromise = (async () => {
+          try {
+            const submitToChannelRes = await this.dubhe.submitToChannel({
+              tx: moveUpTx,
+              nonce,
+            });
+            console.log('[Character] submitToChannel result:', submitToChannelRes);
             transactionSuccess = true;
-          },
-          onError: (error: any) => {
-            console.error(`Move transaction failed:`, error);
-            // 注意：不在这里throw，而是在Promise.all之后处理
-          },
-        });
+          } catch (error) {
+            console.error('[Character] submitToChannel failed:', error);
+            transactionSuccess = false;
+          }
+        })();
 
-        // 等待动画和交易都完成
+        // Wait for both animation and transaction to complete
         await Promise.all([animationPromise, transactionPromise]);
 
-        // 检查交易是否成功
+        // Check if transaction was successful
         if (!transactionSuccess) {
-          // 交易失败，需要回退角色位置
-          console.warn('Transaction failed, reverting character position');
+          // Transaction failed, revert character position
+          console.warn('[Character] Transaction failed, reverting character position');
           this._phaserGameObject.x = originalPosition.x;
           this._phaserGameObject.y = originalPosition.y;
           this._updateAddressLabelPosition();
           throw new Error('Transaction failed');
         }
 
-        // 移动成功，更新状态
+        // Movement successful, update state
         this._previousTargetPosition = { ...this._targetPosition };
       } else {
-        // 如果没有链上操作，直接执行动画
+        // If no chain operation, execute animation directly
         await new Promise<void>(resolve => {
           if (!this._scene || !this._scene.add || typeof this._scene.add.tween !== 'function') {
-            console.warn('场景或动画功能不可用，可能是场景正在切换');
+            console.warn('Scene or animation unavailable, scene may be transitioning');
             resolve();
             return;
           }

@@ -1,23 +1,18 @@
 {
   "projectName": "numeron",
   "network": "testnet",
-  "startCheckpoint": "260265270",
-  "packageId": "0x1fb72cbd742c624c3aced8a7d69e60d18b69623c8d221173ba3e85b256db8c8b",
-  "dappHub": "",
-  "upgradeCap": "0xf12fda94adada758b24d4eede0d1cd20f3a00da3080fd776f54cf23a2df2a916",
+  "startCheckpoint": "292530019",
+  "packageId": "0x4a32e78c9e54fe50d6fbc10bca503516344e06eac6b7cd0b7603b37498b3d964",
+  "dappHub": "0xfef203de9d3a2980429e91df535a0503ccf8d3c05aa3815936984243dc96f19f",
+  "upgradeCap": "0x35390bb3c93c6ab42110ff7b84c14a60b1e7edc40f8c331fa9e83473eec00052",
   "version": 1,
   "components": {},
   "resources": {
-    "tx_digest": "vector<u8>",
     "position": {
       "fields": {
-        "player": "String",
         "x": "u64",
         "y": "u64"
-      },
-      "keys": [
-        "player"
-      ]
+      }
     },
     "item_dropped": {
       "offchain": true,

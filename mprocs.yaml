@@ -3,15 +3,9 @@ procs:
   client:
     cwd: apps/web
     shell: pnpm dubhe wait --local-indexer && pnpm prod:localnet && pnpm dev
-  graphql:
-    cwd: .
-    shell: docker-compose down && rm -rf .data/postgres && docker-compose up --remove-orphans
   contracts:
     cwd: packages/contracts
-    shell: pnpm dubhe wait --localnet && pnpm setup:localnet
-  node:
-    cwd: packages/contracts
-    shell: pnpm dubhe node --force
+    shell: pnpm prod:testnet
   shell:
     cwd: packages/contracts
     shell: pnpm dubhe wait --local-indexer && pnpm dubhe shell

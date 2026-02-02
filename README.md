@@ -40,7 +40,7 @@ Download the `dubhe-channel` binary and place it in the `~/.dubhe/bin` directory
 
 **Download URL:**
 ```
-https://github.com/0xobelisk/dubhe/releases/download/v1.2.0-pre.86/dubhe-channel
+https://github.com/0xobelisk/dubhe/releases/download/v1.2.0-pre.94/dubhe-channel
 ```
 
 **Installation Steps:**
@@ -50,7 +50,7 @@ https://github.com/0xobelisk/dubhe/releases/download/v1.2.0-pre.86/dubhe-channel
 mkdir -p ~/.dubhe/bin
 
 # Download the binary
-curl -L https://github.com/0xobelisk/dubhe/releases/download/v1.2.0-pre.86/dubhe-channel -o ~/.dubhe/bin/dubhe-channel
+curl -L https://github.com/0xobelisk/dubhe/releases/download/v1.2.0-pre.94/dubhe-channel -o ~/.dubhe/bin/dubhe-channel
 
 # Add execute permission
 chmod +x ~/.dubhe/bin/dubhe-channel

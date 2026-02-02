@@ -40,6 +40,7 @@ export class BaseScene extends Phaser.Scene {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
+      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
     });
 
     this.scene.bringToTop();

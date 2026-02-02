@@ -26,11 +26,9 @@ import {
   ITEM_CATEGORY,
   ItemCategory,
 } from '../types/typedef';
-import { Dubhe } from '@0xobelisk/sui-client';
+import { bcs, Dubhe } from '@0xobelisk/sui-client';
 import { NETWORK, PACKAGE_ID } from 'contracts/deployment';
 import { walletUtils } from './wallet-utils';
-import { DubheGraphqlClient } from '@0xobelisk/graphql-client';
-import { DubheGrpcClient } from '@0xobelisk/grpc-client';
 
 const LOCAL_STORAGE_KEY = 'MONSTER_TAMER_DATA';
 
@@ -154,6 +152,7 @@ class DataManager extends Phaser.Events.EventEmitter {
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
+      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
     });
     this.dubhe = dubhe;
   }
@@ -378,9 +377,32 @@ class DataManager extends Phaser.Events.EventEmitter {
     //   name: 'position',
     //   key1: walletUtils.getCurrentAccount().address,
     // });
-    const playerPosition = await walletUtils.graphqlClient.getTableByCondition('position', {
-      player: walletUtils.getCurrentAccount().address,
+
+    const address = walletUtils.getCurrentAccount().address;
+    console.log('address', address);
+    const playerPositionData = await walletUtils.dubhe.queryChannelTable({
+      table: 'position',
+      key: [],
     });
+
+    console.log('playerPositionData', playerPositionData);
+
+
+
+  // console.log('getTableData', getTableData);
+  const xData = Uint8Array.from(playerPositionData.data[0]);
+  const yData = Uint8Array.from(playerPositionData.data[1]);
+
+  // const parsedStringList = bcs.vector(bcs.u64()).parse(datares);
+  const x = bcs.u64().parse(xData);
+  const y = bcs.u64().parse(yData);
+  console.log('x', x);
+  console.log('y', y);
+
+  const playerPosition = {
+    x,
+    y,
+  };
     console.log('playerPosition', playerPosition);
     console.log('walletUtils.getCurrentAccount().address', walletUtils.getCurrentAccount().address);
 
@@ -408,37 +430,36 @@ class DataManager extends Phaser.Events.EventEmitter {
 
   async getAllPlayersPositions(): Promise<Array<{ player: string; x: number; y: number }>> {
     try {
-      // Query all player positions from the position table without conditions
-      // This will return all records in the position table
-      const allPositions = await walletUtils.graphqlClient.getAllTables('position');
-      console.log('========= getAllPlayersPositions - Raw data:', JSON.stringify(allPositions, null, 2));
+      // NOTE: Currently using single player query as a temporary solution
+      // until multi-player query is supported
+      const currentPlayer = walletUtils.getCurrentAccount().address;
+      
+      const playerPositionData = await walletUtils.dubhe.queryChannelTable({
+        table: 'position',
+        key: [],
+      });
+      console.log('========= getAllPlayersPositions - Raw data:', playerPositionData);
 
-      // Check if the result has the edges structure (GraphQL pagination format)
-      if (allPositions && allPositions.edges && Array.isArray(allPositions.edges)) {
-        console.log('========= Processing edges format, found', allPositions.edges.length, 'players');
-        const result = allPositions.edges.map((edge: any) => ({
-          player: edge.node.player,
-          x: Number(edge.node.x) * TILE_SIZE,
-          y: Number(edge.node.y) * TILE_SIZE,
-        }));
-        console.log('========= Processed player positions:', result);
-        return result;
+      if (!playerPositionData || !playerPositionData.data) {
+        console.warn('========= No position data found');
+        return [];
       }
 
-      // If the result is a plain array, process it directly
-      if (Array.isArray(allPositions)) {
-        console.log('========= Processing array format, found', allPositions.length, 'players');
-        const result = allPositions.map((pos: any) => ({
-          player: pos.player,
-          x: Number(pos.x) * TILE_SIZE,
-          y: Number(pos.y) * TILE_SIZE,
-        }));
-        console.log('========= Processed player positions:', result);
-        return result;
-      }
-
-      console.warn('========= Unexpected data format from getAllTables');
-      return [];
+      // Parse x and y coordinates using bcs
+      const xData = Uint8Array.from(playerPositionData.data[0]);
+      const yData = Uint8Array.from(playerPositionData.data[1]);
+      
+      const x = bcs.u64().parse(xData);
+      const y = bcs.u64().parse(yData);
+      
+      const result = [{
+        player: currentPlayer,
+        x: Number(x) * TILE_SIZE,
+        y: Number(y) * TILE_SIZE,
+      }];
+      
+      console.log('========= Processed player positions:', result);
+      return result;
     } catch (error) {
       console.error('Failed to fetch all players positions:', error);
       return [];

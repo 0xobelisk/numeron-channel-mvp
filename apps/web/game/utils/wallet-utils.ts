@@ -1,8 +1,6 @@
 import { Dubhe, NetworkType, SuiMoveNormalizedModules, Transaction } from '@0xobelisk/sui-client';
 import { NETWORK, PACKAGE_ID } from 'contracts/deployment';
 import { SuiTransactionBlockResponse } from '@0xobelisk/sui-client';
-import { DubheGraphqlClient } from '@0xobelisk/graphql-client';
-import { DubheGrpcClient } from '@0xobelisk/grpc-client';
 import contractMetadata from 'contracts/metadata.json';
 import dubheMetadata from 'contracts/dubhe.config.json';
 
@@ -18,8 +16,6 @@ class WalletUtils {
     ws: string;
     grpc: string;
   };
-  graphqlClient: DubheGraphqlClient;
-  grpcClient: DubheGrpcClient;
   #selectedPlayerAddress: string | null = null;
 
   private constructor() {
@@ -41,19 +37,11 @@ class WalletUtils {
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
-      secretKey: NETWORK === 'localnet' ? PRIVATEKEY : undefined,
+      secretKey: PRIVATEKEY ? PRIVATEKEY : undefined,
       metadata: contractMetadata as SuiMoveNormalizedModules,
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
-
-    this.graphqlClient = new DubheGraphqlClient({
-      endpoint: this.endpoint.http,
-      dubheMetadata,
-    });
-    this.grpcClient = new DubheGrpcClient({
-      baseUrl: this.endpoint.grpc,
-    });
   }
 
   /**

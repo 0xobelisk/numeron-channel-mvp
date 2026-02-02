@@ -37,13 +37,13 @@ import {
   GameEventMoveToPlayer,
 } from '../types/typedef';
 import { PlayerLocation } from '../utils/data-manager';
-import { Dubhe, loadMetadata, SuiMoveNormalizedModules, Transaction } from '@0xobelisk/sui-client';
+import { Dubhe, loadMetadata, SuiMoveNormalizedModules, Transaction, bcs, fromHex, toHex } from '@0xobelisk/sui-client';
 import { DUBHE_SCHEMA_ID, NETWORK, PACKAGE_ID } from 'contracts/deployment';
 import { ChatScene } from './chat-scene';
 import { MessageType } from './chat-scene';
 import { walletUtils } from '../utils/wallet-utils';
-import { Struct } from '@0xobelisk/grpc-client';
 import contractMetadata from 'contracts/metadata.json';
+import { nonceManager } from '../utils/nonce-manager';
 
 export type TiledObjectProperty = {
   name: string;
@@ -123,7 +123,7 @@ export class WorldScene extends BaseScene {
   #encounterZonePlayerIsEntering: Phaser.Tilemaps.TilemapLayer | undefined;
   dubhe: Dubhe;
   schemaId: string;
-  subscription: WebSocket;
+  subscription: (() => void) | null;
   #otherPlayers: Map<string, Player>;
   #transactionFeedContainer: Phaser.GameObjects.Container;
   #transactionFeedTexts: Phaser.GameObjects.Text[];
@@ -206,6 +206,11 @@ export class WorldScene extends BaseScene {
 
   async create() {
     super.create();
+    
+    // Initialize nonce manager for channel transactions
+    await nonceManager.initialize();
+    console.log('[WorldScene] Nonce manager initialized');
+    
     // create rectangles for checking for overlaps between game objects, added so we can recycle game objects
     this.#rectangleForOverlapCheck1 = new Phaser.Geom.Rectangle();
     this.#rectangleForOverlapCheck2 = new Phaser.Geom.Rectangle();
@@ -248,19 +253,24 @@ export class WorldScene extends BaseScene {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
+      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
     });
 
     this.dubhe = dubhe;
-    let have_player = await walletUtils.graphqlClient.getTableByCondition('position', {
-      player: walletUtils.getCurrentAccount().address,
-    });
+    // let have_player = await walletUtils.graphqlClient.getTableByCondition('position', {
+    //   player: walletUtils.getCurrentAccount().address,
+    // });
+    let have_player = await walletUtils.dubhe.queryChannelTable({
+      table: 'position',
+      key: [],
+    })
 
     console.log('=========have_player', have_player);
     // // TODO: register new player
     // if (!have_player) {
     //   await this.registerNewPlayer(dubhe);
     // }
-    // TODO: subscribe to events
+    // Subscribe to channel events
     await this.subscribeToEvents();
 
     // Check if in teleport state
@@ -462,67 +472,102 @@ export class WorldScene extends BaseScene {
   }
 
   /**
-   * Handles real-time game events through WebSocket subscription
-   * @param dubhe - Dubhe client instance
+   * Handles real-time game events through channel subscription
    */
   async subscribeToEvents() {
     try {
       // First check if there's an existing subscription, if so close it
       if (this.subscription) {
         try {
-          this.subscription.close();
-          console.log('Closed previous WebSocket subscription to prevent duplicate messages');
+          this.subscription();
+          console.log('Closed previous channel subscription to prevent duplicate messages');
         } catch (closeError) {
-          console.warn('Failed to close WebSocket subscription:', closeError);
+          console.warn('Failed to close channel subscription:', closeError);
         }
       }
 
-      console.log('========= subscribeToEvents - starting subscription');
-      const subscription = walletUtils.grpcClient.dubheGrpcClient.subscribeTable({
-        tableIds: [],
-      });
-      console.log('========= subscription created', subscription);
+      console.log('========= subscribeToEvents - starting channel subscription');
+      
+      // Subscribe to all table changes for all accounts
+      const unsubscribe = await this.dubhe.subscribeChannelTable(
+        {
+          // Not specifying account to subscribe to all accounts
+          // Not specifying table to subscribe to all tables
+        },
+        {
+          // Callback when connection established
+          onOpen: () => {
+            console.log('✅ Successfully connected to channel subscription (all accounts & tables)');
+          },
 
-      // Process subscription events in the background without blocking
-      // Use an immediately-invoked async function that runs independently
-      (async () => {
-        try {
-          for await (const change of subscription.responses) {
-            console.log(`--------------------------------`);
-            console.log(`Table: ${change.tableId}`);
-            if (change.data) {
-              const data = Struct.toJson(change.data);
-              console.log('Suceess submit transaction', data['last_update_digest']);
+          // Callback when receiving new data
+          onMessage: (data) => {
+            console.log('📨 Received update:', { table: data.table, account: data.account });
 
-              // Add transaction to feed display
-              if (data['last_update_digest']) {
-                this.#addTransactionToFeed(data['last_update_digest'], change.tableId);
+            // Only handle item_dropped events
+            if (data.table === 'item_dropped') {
+              try {
+                // Parse item_dropped table data
+                const playerData = Uint8Array.from(data.value[0]);
+                const itemTypeData = Uint8Array.from(data.value[1]);
+
+                const Address = bcs.bytes(32).transform({
+                  // To change the input type, you need to provide a type definition for the input
+                  input: (val: string) => fromHex(val),
+                  output: (val) => toHex(val)
+                });
+
+                // Parse player address (address type in Move)
+                const player = Address.parse(playerData);
+
+                // Register and parse ItemType enum
+                const ItemTypeBcs = bcs.enum('ItemType', {
+                  Ball: null,
+                  Currency: null,
+                  Food: null,
+                  Material: null,
+                  Medicine: null,
+                  Scroll: null,
+                  SkillBook: null,
+                  TreasureChest: null
+                });
+
+                const itemType = ItemTypeBcs.parse(itemTypeData);
+
+                console.log('🎁 Item dropped:');
+                console.log('  - Player:', player);
+                console.log('  - Item Type:', itemType);
+
+                // Call the existing handler with formatted data
+                this.#handleItemDroppedEvent({
+                  player: player,
+                  item_type: itemType.$kind,
+                });
+              } catch (error) {
+                console.error('Failed to parse item_dropped data:', error);
+                console.error('Table:', data.table);
+                console.error('Raw value:', data.value);
               }
-
-              console.log(`Data: ${JSON.stringify(data, null, 2)}`);
-
-              // Handle position updates for other players
-              if (change.tableId === 'position' && data) {
-                await this.#handleOtherPlayerPositionUpdate(data);
-              }
-
-              // Handle item dropped events
-              if (change.tableId === 'item_dropped' && data) {
-                await this.#handleItemDroppedEvent(data);
-              }
-            } else {
-              console.log(`Data: None`);
             }
-          }
-          console.log('========= subscription loop ended');
-        } catch (error) {
-          console.error('Error in subscription loop:', error);
-        }
-      })();
+          },
 
-      console.log('========= subscribeToEvents - subscription started in background');
+          // Callback when error occurs
+          onError: (error) => {
+            console.error('❌ Subscription error:', error);
+          },
+
+          // Callback when connection closed
+          onClose: () => {
+            console.log('🔌 Subscription connection closed');
+          }
+        }
+      );
+
+      // Store the unsubscribe function
+      this.subscription = unsubscribe;
+      console.log('========= subscribeToEvents - channel subscription started successfully');
     } catch (error) {
-      console.error('Failed to subscribe to events:', error);
+      console.error('Failed to subscribe to channel events:', error);
     }
   }
 
