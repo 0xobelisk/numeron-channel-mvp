@@ -3,6 +3,10 @@ import { Dubhe, SuiMoveNormalizedModules } from '@0xobelisk/sui-client';
 import { NETWORK, PACKAGE_ID, DUBHE_SCHEMA_ID } from 'contracts/deployment';
 import contractMetadata from 'contracts/metadata.json';
 
+const CHANNEL_URL =
+  process.env.NEXT_PUBLIC_CHANNEL_URL ||
+  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
+
 export class BaseScene extends Phaser.Scene {
   _controls: Controls;
   _dubhe: Dubhe;
@@ -40,7 +44,8 @@ export class BaseScene extends Phaser.Scene {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
+      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY,
+      channelUrl: CHANNEL_URL
     });
 
     this.scene.bringToTop();

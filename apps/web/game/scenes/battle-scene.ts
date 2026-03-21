@@ -24,7 +24,7 @@ import { BattleSceneMenuOptions } from '../common/options';
 import { WorldSceneData } from './world-scene';
 import { MonsterPartySceneData } from './monster-party-scene';
 import { StatChanges } from '../utils/leveling-utils';
-import { IndexerTransactionResult, Transaction } from '@0xobelisk/sui-client';
+import { SuiTransactionBlockResponse, Transaction } from '@0xobelisk/sui-client';
 import { walletUtils } from '../utils/wallet-utils';
 
 const BATTLE_STATES = Object.freeze({
@@ -769,7 +769,7 @@ export class BattleScene extends BaseScene {
       name: BATTLE_STATES.BALL_ITEM_USED,
       onEnter: async () => {
         const tx = new Transaction();
-        let txResponse: IndexerTransactionResult;
+        let txResponse: SuiTransactionBlockResponse;
         await this._dubhe.tx.numeron_encounter_system.capture({
           tx,
           params: [
@@ -797,7 +797,9 @@ export class BattleScene extends BaseScene {
 
             await Promise.all([animationsPromise, waitTxPromise]);
 
-            const catchEvent = txResponse.events.find(event => event.name === 'monster_catch_attempt_event');
+            const catchEvent = txResponse.events?.find(event =>
+              event.type.includes('monster_catch_attempt_event')
+            );
 
             if (!catchEvent) {
               console.error('Capture event data not found');
@@ -807,7 +809,7 @@ export class BattleScene extends BaseScene {
             console.log('catchEvent', catchEvent);
 
             // Determine capture result based on event data
-            const catchResult = catchEvent.value.result;
+            const catchResult = (catchEvent.parsedJson as { result: Record<string, unknown> }).result;
             const wasCaptured = Object.keys(catchResult)[0] === 'Caught';
 
             // Determine ball shake count based on result

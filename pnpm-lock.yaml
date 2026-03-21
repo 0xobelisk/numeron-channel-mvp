@@ -39,8 +39,8 @@ importers:
         specifier: ^1.2.0-pre.96
         version: 1.2.0-pre.96(@types/node@20.19.30)
       '@0xobelisk/sui-client':
-        specifier: ^1.2.0-pre.96
-        version: 1.2.0-pre.96(typescript@5.9.3)
+        specifier: file:../../../packages/sui-client
+        version: file:../packages/sui-client(typescript@5.9.3)
       '@0xobelisk/sui-common':
         specifier: ^1.2.0-pre.96
         version: 1.2.0-pre.96
@@ -376,6 +376,10 @@ packages:
 
   '@0xobelisk/sui-client@1.2.0-pre.96':
     resolution: {integrity: sha512-27ZUiE9tfhf0TXdg4IM/jJPATR1tNcESyb6ExdNX1c2BBmkjkSx5t5EEIs+mvB0dRrmknOoz07S1XLNZby+Udw==}
+    engines: {node: '>=22.0.0'}
+
+  '@0xobelisk/sui-client@file:../packages/sui-client':
+    resolution: {directory: ../packages/sui-client, type: directory}
     engines: {node: '>=22.0.0'}
 
   '@0xobelisk/sui-common@1.2.0-pre.96':
@@ -4902,6 +4906,32 @@ snapshots:
       ts-retry-promise: 0.7.1
       tweetnacl: 1.0.3
       valibot: 1.2.0(typescript@5.9.3)
+    transitivePeerDependencies:
+      - '@gql.tada/svelte-support'
+      - '@gql.tada/vue-support'
+      - typescript
+
+  '@0xobelisk/sui-client@file:../packages/sui-client(typescript@5.9.3)':
+    dependencies:
+      '@mysten/bcs': 1.6.3
+      '@mysten/sui': 1.35.0(typescript@5.9.3)
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      '@scure/bip39': 1.6.0
+      '@suchipi/femver': 1.0.0
+      '@types/pluralize': 0.0.33
+      assert: 2.1.0
+      bech32: 2.0.0
+      colorts: 0.1.63
+      husky: 8.0.3
+      keccak256: 1.0.6
+      pluralize: 8.0.0
+      process: 0.11.10
+      superstruct: 1.0.4
+      tmp: 0.2.5
+      ts-retry-promise: 0.7.1
+      tweetnacl: 1.0.3
+      valibot: 0.36.0
     transitivePeerDependencies:
       - '@gql.tada/svelte-support'
       - '@gql.tada/vue-support'

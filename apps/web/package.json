@@ -24,7 +24,7 @@
     "prod:mainnet": "pnpm account:gen && pnpm check-balance mainnet"
   },
   "dependencies": {
-    "@0xobelisk/sui-client": "^1.2.0-pre.96",
+    "@0xobelisk/sui-client": "file:../../../packages/sui-client",
     "@0xobelisk/sui-cli": "^1.2.0-pre.96",
     "@0xobelisk/sui-common": "^1.2.0-pre.96",
     "contracts": "workspace:*",

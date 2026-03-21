@@ -31,6 +31,9 @@ import { NETWORK, PACKAGE_ID } from 'contracts/deployment';
 import { walletUtils } from './wallet-utils';
 
 const LOCAL_STORAGE_KEY = 'MONSTER_TAMER_DATA';
+const CHANNEL_URL =
+  process.env.NEXT_PUBLIC_CHANNEL_URL ||
+  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
 
 export type PlayerLocation = {
   area: string;
@@ -152,7 +155,8 @@ class DataManager extends Phaser.Events.EventEmitter {
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
+      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY,
+      channelUrl: CHANNEL_URL
     });
     this.dubhe = dubhe;
   }
@@ -380,16 +384,28 @@ class DataManager extends Phaser.Events.EventEmitter {
 
     const address = walletUtils.getCurrentAccount().address;
     console.log('address', address);
-    const playerPositionData = await walletUtils.dubhe.queryChannelTable({
-      table: 'position',
-      key: [],
-    });
+    let playerPositionData;
+    try {
+      playerPositionData = await walletUtils.dubhe.queryChannelTable({
+        account: address,
+        table: 'position',
+        key: [],
+      });
+    } catch (error) {
+      console.warn('playerPosition lookup failed, falling back to default spawn', error);
+      return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+    }
 
     console.log('playerPositionData', playerPositionData);
 
 
 
   // console.log('getTableData', getTableData);
+  if (!playerPositionData?.message || !playerPositionData.data?.[0] || !playerPositionData.data?.[1]) {
+    console.log('=========playerPosition not found');
+    return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+  }
+
   const xData = Uint8Array.from(playerPositionData.data[0]);
   const yData = Uint8Array.from(playerPositionData.data[1]);
 
@@ -435,6 +451,7 @@ class DataManager extends Phaser.Events.EventEmitter {
       const currentPlayer = walletUtils.getCurrentAccount().address;
       
       const playerPositionData = await walletUtils.dubhe.queryChannelTable({
+        account: currentPlayer,
         table: 'position',
         key: [],
       });
@@ -464,6 +481,25 @@ class DataManager extends Phaser.Events.EventEmitter {
       console.error('Failed to fetch all players positions:', error);
       return [];
     }
+  }
+
+  async getInventory(): Promise<InventoryItem[]> {
+    const inventory: Inventory = this.#store.get(DATA_MANAGER_STORE_KEYS.INVENTORY) || [];
+    return inventory.map(({ item, quantity }) => ({
+      item: {
+        id: item.id,
+        name: `Item ${item.id}`,
+        effect: ITEM_EFFECT.DEFAULT,
+        description: '',
+        category: ITEM_CATEGORY.Ball,
+        isTransferable: true,
+      },
+      quantity,
+    }));
+  }
+
+  async updateMonsters(): Promise<Monster[]> {
+    return this.#store.get(DATA_MANAGER_STORE_KEYS.MONSTERS_IN_PARTY) || [];
   }
 }
 

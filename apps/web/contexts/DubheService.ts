@@ -9,10 +9,15 @@ import {
 } from '@0xobelisk/sui-client';
 import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from 'contracts/deployment';
 import { InventoryItem, ITEM_EFFECT, ItemCategory, LOCATION_TYPE, Monster } from '@/game/types/typedef';
-import { PlayerLocation } from '@/game/utils/data-manager';
+import { DATA_MANAGER_STORE_KEYS, PlayerLocation, dataManager } from '@/game/utils/data-manager';
 import { TILE_SIZE } from '@/game/config';
 import contractMetadata from 'contracts/metadata.json';
 import dubheMetadata from 'contracts/dubhe.config.json';
+import { walletUtils } from '@/game/utils/wallet-utils';
+
+const CHANNEL_URL =
+  process.env.NEXT_PUBLIC_CHANNEL_URL ||
+  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
 
 export interface CraftPath {
   id: string;
@@ -65,7 +70,8 @@ export class DubheService {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: PRIVATEKEY
+      secretKey: PRIVATEKEY,
+      channelUrl: CHANNEL_URL
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
@@ -154,10 +160,18 @@ export class DubheService {
   }
 
   async getPlayerPosition(): Promise<{ x: number; y: number; location: PlayerLocation }> {
-    const playerPositionData = await this.dubhe.queryChannelTable({
-      table: 'position',
-      key: [],
-    });
+    const account = this.getCurrentAccount().address;
+    let playerPositionData;
+    try {
+      playerPositionData = await this.dubhe.queryChannelTable({
+        account,
+        table: 'position',
+        key: [],
+      });
+    } catch (error) {
+      console.warn('getPlayerPosition lookup failed, falling back to default spawn', error);
+      return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+    }
 
     if (playerPositionData && playerPositionData.data) {
       // Parse x and y coordinates using bcs
@@ -174,6 +188,32 @@ export class DubheService {
       };
     }
     return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+  }
+
+  async blanceOf() {
+    return walletUtils.blanceOf({});
+  }
+
+  async getOwnedMonsters(): Promise<Monster[]> {
+    return [];
+  }
+
+  async getOwnedItems(): Promise<InventoryItem[]> {
+    return dataManager.store.get(DATA_MANAGER_STORE_KEYS.INVENTORY) || [];
+  }
+
+  async itemMetadatas(): Promise<ItemMetadata[]> {
+    return [];
+  }
+
+  async craftItem(itemId: string): Promise<{ txUrl: string }> {
+    return {
+      txUrl: `https://suiexplorer.com/?network=${this.network}`,
+    };
+  }
+
+  async queryItemCraftPath(): Promise<CraftPath[]> {
+    return [];
   }
 
   /**
