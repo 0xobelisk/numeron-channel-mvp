@@ -377,8 +377,9 @@ class WalletUtils {
     channelSender?: string;
   }): Promise<SuiTransactionBlockResponse | null> {
     try {
-      if (this.shouldSubmitThroughChannel()) {
-        const sender = channelSender || this.getChannelSubmitSenderAddress();
+      const sender = channelSender || this.getChannelSubmitSenderAddress();
+
+      if (channelSender || this.shouldSubmitThroughChannel()) {
         const result = await this.submitTransactionToChannel({
           tx,
           sender,
