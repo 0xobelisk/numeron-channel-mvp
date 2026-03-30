@@ -134,6 +134,7 @@ export default function ProxyOnboardingCard() {
   const [proxyBalance, setProxyBalance] = useState<string>('0');
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [proxyRuntime, setProxyRuntime] = useState<ProxyRuntimeState>({
     checked: false,
     available: false,
@@ -160,6 +161,14 @@ export default function ProxyOnboardingCard() {
   const bridgeClient = useMemo(() => createDubheWalletBridgeClient({ walletOrigin }), [walletOrigin]);
   const canUseProxy = proxyRuntime.available && Boolean(FRAMEWORK_PACKAGE_ID);
   const canUseBrowserWallet = connectedBrowserWallet && currentAccount?.address === ownerAddress;
+  const statusTone = proxyState.active ? '#15803d' : proxyState.exists ? '#b45309' : '#64748b';
+  const compactStatusLabel = proxyState.active
+    ? 'Active'
+    : proxyState.exists
+      ? 'Inactive'
+      : ownerAddress
+        ? 'Ready'
+        : 'Closed';
 
   const executeOwnerTransaction = async ({
     tx,
@@ -379,6 +388,12 @@ export default function ProxyOnboardingCard() {
     void refreshProxyState();
   }, [ownerAddress, proxyAddress, walletOrigin]);
 
+  useEffect(() => {
+    if (busyAction || status || (proxyRuntime.checked && !proxyRuntime.available)) {
+      setIsExpanded(true);
+    }
+  }, [busyAction, proxyRuntime.available, proxyRuntime.checked, status]);
+
   const fundProxy = async () => {
     if (!ownerAddress) {
       return;
@@ -504,84 +519,151 @@ export default function ProxyOnboardingCard() {
   return (
     <div
       style={{
-        borderRadius: 12,
-        border: '1px solid rgba(148, 163, 184, 0.55)',
-        background: 'rgba(248, 250, 252, 0.94)',
-        color: '#0f172a',
-        padding: '10px 12px',
-        minWidth: 280,
-        maxWidth: 340,
+        width: 'min(340px, calc(100vw - 24px))',
+        maxWidth: '100%',
         display: 'grid',
-        gap: 8,
-        fontSize: 12,
+        gap: 6,
       }}
     >
-      <div style={{ fontWeight: 800, fontSize: 13 }}>Wallet Proxy</div>
-      <div style={{ color: '#334155', lineHeight: 1.5 }}>
-        Owner: {ownerAddress ? shorten(ownerAddress) : 'Not connected'}
-      </div>
-      <div style={{ color: '#334155', lineHeight: 1.5 }}>
-        Signer: {shorten(proxyAddress)} ({proxyBalance} SUI)
-      </div>
-      <div style={{ color: '#334155', lineHeight: 1.5 }}>
-        Status:{' '}
-        {proxyState.active
-          ? `Active until ${formatExpiry(proxyState.expiresAt)}`
-          : proxyState.exists
-            ? 'Binding exists but is inactive/expired'
-            : 'No binding'}
-      </div>
-      {storedProxyContext ? (
-        <div style={{ color: '#475569', lineHeight: 1.5 }}>
-          Stored owner: {shorten(storedProxyContext.ownerAddress)}
+      <button
+        type="button"
+        onClick={() => setIsExpanded(value => !value)}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr auto auto',
+          alignItems: 'center',
+          gap: 10,
+          width: '100%',
+          borderRadius: 12,
+          border: '1px solid rgba(148, 163, 184, 0.45)',
+          background: 'rgba(15, 23, 42, 0.88)',
+          color: '#f8fafc',
+          padding: '10px 12px',
+          cursor: 'pointer',
+          textAlign: 'left',
+          backdropFilter: 'blur(4px)',
+        }}
+      >
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ fontWeight: 800, fontSize: 13 }}>Wallet Proxy</div>
+          <div style={{ fontSize: 11, opacity: 0.8 }}>
+            {ownerAddress ? shorten(ownerAddress, 8, 6) : 'No wallet connected'}
+          </div>
         </div>
-      ) : null}
-      {!FRAMEWORK_PACKAGE_ID ? (
-        <div style={{ color: '#9f1239', lineHeight: 1.5 }}>
-          Missing a Dubhe framework package id. Set <code>NEXT_PUBLIC_DUBHE_FRAMEWORK_PACKAGE_ID</code>{' '}
-          if this environment should use a non-default package.
-        </div>
-      ) : null}
-      {FRAMEWORK_PACKAGE_ID && proxyRuntime.checked && !proxyRuntime.available ? (
-        <div style={{ color: '#9f1239', lineHeight: 1.5 }}>{proxyRuntime.reason}</div>
-      ) : null}
-      {showWalletHint ? (
-        <div style={{ color: '#334155', lineHeight: 1.5 }}>
-          Connect a browser Sui wallet or open Numeron from Dubhe Wallet first.
-        </div>
-      ) : null}
-      {isClientReady && !currentAccount ? (
-        <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-          <ConnectButton />
-        </div>
-      ) : null}
-      {status ? <div style={{ color: '#1d4ed8', lineHeight: 1.5 }}>{status}</div> : null}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        <button
-          type="button"
-          onClick={() => void fundProxy()}
-          disabled={!ownerAddress || Boolean(busyAction)}
-          style={buttonStyle('#15803d')}
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            borderRadius: 999,
+            padding: '4px 8px',
+            background: 'rgba(255,255,255,0.1)',
+            fontSize: 11,
+            fontWeight: 700,
+            color: '#e2e8f0',
+          }}
         >
-          {busyAction === 'fund' ? 'Funding...' : 'Fund 1 SUI'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void createProxy()}
-          disabled={!ownerAddress || !canUseProxy || Boolean(busyAction)}
-          style={buttonStyle('#7c3aed')}
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: statusTone,
+              flexShrink: 0,
+            }}
+          />
+          {compactStatusLabel}
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800 }}>{isExpanded ? 'Hide' : 'Show'}</div>
+      </button>
+      {isExpanded ? (
+        <div
+          style={{
+            borderRadius: 12,
+            border: '1px solid rgba(148, 163, 184, 0.55)',
+            background: 'rgba(248, 250, 252, 0.94)',
+            color: '#0f172a',
+            padding: '10px 12px',
+            display: 'grid',
+            gap: 8,
+            fontSize: 12,
+            maxHeight: 'min(70vh, 420px)',
+            overflowY: 'auto',
+          }}
         >
-          {busyAction === 'create' ? 'Creating...' : proxyState.active ? 'Refresh Proxy' : 'Create Proxy'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void removeProxy()}
-          disabled={!ownerAddress || !proxyState.exists || Boolean(busyAction)}
-          style={buttonStyle('#b91c1c')}
-        >
-          {busyAction === 'remove' ? 'Removing...' : 'Remove Proxy'}
-        </button>
-      </div>
+          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+            Owner: {ownerAddress ? shorten(ownerAddress) : 'Not connected'}
+          </div>
+          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+            Signer: {shorten(proxyAddress)} ({proxyBalance} SUI)
+          </div>
+          <div style={{ color: '#334155', lineHeight: 1.5 }}>
+            Status:{' '}
+            {proxyState.active
+              ? `Active until ${formatExpiry(proxyState.expiresAt)}`
+              : proxyState.exists
+                ? 'Binding exists but is inactive/expired'
+                : 'No binding'}
+          </div>
+          {storedProxyContext ? (
+            <div style={{ color: '#475569', lineHeight: 1.5 }}>
+              Stored owner: {shorten(storedProxyContext.ownerAddress)}
+            </div>
+          ) : null}
+          {!FRAMEWORK_PACKAGE_ID ? (
+            <div style={{ color: '#9f1239', lineHeight: 1.5 }}>
+              Missing a Dubhe framework package id. Set <code>NEXT_PUBLIC_DUBHE_FRAMEWORK_PACKAGE_ID</code>{' '}
+              if this environment should use a non-default package.
+            </div>
+          ) : null}
+          {FRAMEWORK_PACKAGE_ID && proxyRuntime.checked && !proxyRuntime.available ? (
+            <div style={{ color: '#9f1239', lineHeight: 1.5 }}>{proxyRuntime.reason}</div>
+          ) : null}
+          {showWalletHint ? (
+            <div style={{ color: '#334155', lineHeight: 1.5 }}>
+              Connect a browser Sui wallet or open Numeron from Dubhe Wallet first.
+            </div>
+          ) : null}
+          {isClientReady && !currentAccount ? (
+            <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+              <ConnectButton />
+            </div>
+          ) : null}
+          {status ? <div style={{ color: '#1d4ed8', lineHeight: 1.5 }}>{status}</div> : null}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))',
+              gap: 8,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => void fundProxy()}
+              disabled={!ownerAddress || Boolean(busyAction)}
+              style={buttonStyle('#15803d')}
+            >
+              {busyAction === 'fund' ? 'Funding...' : 'Fund 1 SUI'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void createProxy()}
+              disabled={!ownerAddress || !canUseProxy || Boolean(busyAction)}
+              style={buttonStyle('#7c3aed')}
+            >
+              {busyAction === 'create' ? 'Creating...' : proxyState.active ? 'Refresh Proxy' : 'Create Proxy'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void removeProxy()}
+              disabled={!ownerAddress || !proxyState.exists || Boolean(busyAction)}
+              style={buttonStyle('#b91c1c')}
+            >
+              {busyAction === 'remove' ? 'Removing...' : 'Remove Proxy'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
