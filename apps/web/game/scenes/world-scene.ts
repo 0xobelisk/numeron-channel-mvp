@@ -406,9 +406,14 @@ export class WorldScene extends BaseScene {
       have_player = null;
     }
 
+    const missingPlayerPosition = !have_player?.message || !have_player?.data?.[0] || !have_player?.data?.[1];
     this.#debugLog('have_player', have_player);
-    if (!initialLookupFailed && (!have_player?.message || !have_player?.data?.[0] || !have_player?.data?.[1])) {
-      this.#debugLog('registering missing player', currentPlayerAddress);
+    if (initialLookupFailed || missingPlayerPosition) {
+      this.#debugLog('registering missing player', {
+        currentPlayerAddress,
+        currentPlayerContractKey,
+        initialLookupFailed,
+      });
       await this.registerNewPlayer(dubhe);
       await this.#waitForRegisteredPlayerPosition(currentPlayerContractKey);
     }
