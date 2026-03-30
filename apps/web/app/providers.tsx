@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { createNetworkConfig, SuiClientProvider } from '@mysten/dapp-kit';
+import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { getFullnodeUrl } from '@0xobelisk/sui-client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import clientConfig from '@/config/clientConfig';
@@ -22,7 +22,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <SuiClientProvider networks={networkConfig} defaultNetwork={defaultNetwork}>
-        <main>{children}</main>
+        <WalletProvider autoConnect storageKey="numeron-wallet">
+          <main>{children}</main>
+        </WalletProvider>
       </SuiClientProvider>
     </QueryClientProvider>
   );

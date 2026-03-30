@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Transaction } from '@0xobelisk/sui-client';
+import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import {
   FRAMEWORK_PACKAGE_ID,
   NETWORK,
@@ -126,6 +127,8 @@ function writePendingProxyAction(action: PendingProxyAction | null) {
 }
 
 export default function ProxyOnboardingCard() {
+  const currentAccount = useCurrentAccount();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [launchContext, setLaunchContext] = useState<DubheWalletLaunchContext | null>(() =>
     typeof window === 'undefined' ? null : resolveCurrentDubheWalletLaunchContext()
   );
@@ -149,7 +152,11 @@ export default function ProxyOnboardingCard() {
 
   const storedProxyContext = readNumeronProxyContext();
   const ownerAddress =
-    launchContext?.walletAddress ?? connectIdentity?.address ?? storedProxyContext?.ownerAddress ?? null;
+    launchContext?.walletAddress ??
+    connectIdentity?.address ??
+    currentAccount?.address ??
+    storedProxyContext?.ownerAddress ??
+    null;
   const walletOrigin =
     launchContext?.walletOrigin ??
     connectIdentity?.walletOrigin ??
@@ -160,6 +167,53 @@ export default function ProxyOnboardingCard() {
   const bridgeClient = useMemo(() => createDubheWalletBridgeClient({ walletOrigin }), [walletOrigin]);
   const authHref = useMemo(() => buildAuthHref(launchContext), [launchContext]);
   const canUseProxy = proxyRuntime.available && Boolean(FRAMEWORK_PACKAGE_ID);
+  const canUseBrowserWallet = Boolean(currentAccount) && currentAccount?.address === ownerAddress;
+
+  const executeOwnerTransaction = async ({
+    tx,
+    pending,
+  }: {
+    tx: Transaction;
+    pending?: PendingProxyAction;
+  }) => {
+    if (canUseBrowserWallet && currentAccount) {
+      await signAndExecuteTransaction({
+        transaction: tx,
+        chain: `sui:${walletNetwork}`,
+        account: currentAccount,
+      });
+      return 'browser-wallet' as const;
+    }
+
+    if (shouldPreferRedirectBridge()) {
+      const request = beginDubheWalletBridgeRedirect(
+        'signAndExecuteTransaction',
+        {
+          transaction: await tx.toJSON(),
+          chain: `sui:${walletNetwork}`,
+          accountAddress: ownerAddress!,
+        },
+        {
+          walletOrigin,
+          returnUrl: window.location.href,
+        }
+      );
+      if (pending) {
+        writePendingProxyAction({
+          ...pending,
+          requestId: request.id,
+        });
+      }
+      return 'redirect-bridge' as const;
+    }
+
+    await bridgeClient.signAndExecuteTransaction(
+      await tx.toJSON(),
+      `sui:${walletNetwork}`,
+      ownerAddress!
+    );
+    return 'wallet-bridge' as const;
+  };
 
   const refreshLaunchState = () => {
     setLaunchContext(resolveCurrentDubheWalletLaunchContext());
@@ -342,31 +396,17 @@ export default function ProxyOnboardingCard() {
       const tx = new Transaction();
       tx.setGasBudget(BigInt(2_000_000));
       tx.transferObjects([tx.splitCoins(tx.gas, [MIST_PER_SUI])], proxyAddress);
-      if (shouldPreferRedirectBridge()) {
-        const request = beginDubheWalletBridgeRedirect(
-          'signAndExecuteTransaction',
-          {
-            transaction: await tx.toJSON(),
-            chain: `sui:${walletNetwork}`,
-            accountAddress: ownerAddress,
-          },
-          {
-            walletOrigin,
-            returnUrl: window.location.href,
-          }
-        );
-        writePendingProxyAction({
-          requestId: request.id,
+      const route = await executeOwnerTransaction({
+        tx,
+        pending: {
+          requestId: '',
           action: 'fund',
           ownerAddress,
-        });
+        },
+      });
+      if (route === 'redirect-bridge') {
         return;
       }
-      await bridgeClient.signAndExecuteTransaction(
-        await tx.toJSON(),
-        `sui:${walletNetwork}`,
-        ownerAddress
-      );
       setStatus('1 SUI transferred to the proxy signer.');
       window.setTimeout(() => {
         void refreshProxyBalance();
@@ -396,33 +436,19 @@ export default function ProxyOnboardingCard() {
         frameworkPackageId: FRAMEWORK_PACKAGE_ID,
         expiresAt,
       });
-      if (shouldPreferRedirectBridge()) {
-        const request = beginDubheWalletBridgeRedirect(
-          'signAndExecuteTransaction',
-          {
-            transaction: await tx.toJSON(),
-            chain: `sui:${walletNetwork}`,
-            accountAddress: ownerAddress,
-          },
-          {
-            walletOrigin,
-            returnUrl: window.location.href,
-          }
-        );
-        writePendingProxyAction({
-          requestId: request.id,
+      const route = await executeOwnerTransaction({
+        tx,
+        pending: {
+          requestId: '',
           action: 'create',
           ownerAddress,
           expiresAt,
           walletOrigin,
-        });
+        },
+      });
+      if (route === 'redirect-bridge') {
         return;
       }
-      await bridgeClient.signAndExecuteTransaction(
-        await tx.toJSON(),
-        `sui:${walletNetwork}`,
-        ownerAddress
-      );
       saveNumeronProxyContext({
         version: 1,
         ownerAddress,
@@ -457,31 +483,17 @@ export default function ProxyOnboardingCard() {
         packageId: PACKAGE_ID,
         frameworkPackageId: FRAMEWORK_PACKAGE_ID,
       });
-      if (shouldPreferRedirectBridge()) {
-        const request = beginDubheWalletBridgeRedirect(
-          'signAndExecuteTransaction',
-          {
-            transaction: await tx.toJSON(),
-            chain: `sui:${walletNetwork}`,
-            accountAddress: ownerAddress,
-          },
-          {
-            walletOrigin,
-            returnUrl: window.location.href,
-          }
-        );
-        writePendingProxyAction({
-          requestId: request.id,
+      const route = await executeOwnerTransaction({
+        tx,
+        pending: {
+          requestId: '',
           action: 'remove',
           ownerAddress,
-        });
+        },
+      });
+      if (route === 'redirect-bridge') {
         return;
       }
-      await bridgeClient.signAndExecuteTransaction(
-        await tx.toJSON(),
-        `sui:${walletNetwork}`,
-        ownerAddress
-      );
       clearNumeronProxyContext();
       walletUtils.resetCurrentPlayerToBootstrap();
       setStatus('Proxy binding removed. Reloading Numeron back to the local burner identity.');
@@ -542,7 +554,7 @@ export default function ProxyOnboardingCard() {
       ) : null}
       {showWalletHint ? (
         <div style={{ color: '#334155', lineHeight: 1.5 }}>
-          Open Numeron from Dubhe Wallet or <Link href={authHref}>sign in with Dubhe Connect</Link> first.
+          Connect a browser Sui wallet, open Numeron from Dubhe Wallet, or <Link href={authHref}>sign in with Dubhe Connect</Link> first.
         </div>
       ) : null}
       {status ? <div style={{ color: '#1d4ed8', lineHeight: 1.5 }}>{status}</div> : null}
