@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Transaction } from '@0xobelisk/sui-client';
@@ -24,10 +23,7 @@ import {
   hasDubheProxy,
   isDubheProxyActive,
 } from '@/lib/dubhe-proxy';
-import {
-  DEFAULT_DUBHE_WALLET_ORIGIN,
-  readDubheConnectIdentity,
-} from '@/lib/dubhe-connect';
+import { DEFAULT_DUBHE_WALLET_ORIGIN } from '@/lib/dubhe-connect';
 import {
   resolveCurrentDubheWalletLaunchContext,
   type DubheWalletLaunchContext,
@@ -50,7 +46,6 @@ const MIST_PER_SUI = BigInt(1_000_000_000);
 const MS_PER_HOUR = 3_600_000;
 const PROXY_PENDING_ACTION_STORAGE_KEY = 'NUMERON_PROXY_PENDING_ACTION_V1';
 
-type ConnectIdentity = ReturnType<typeof readDubheConnectIdentity>;
 type ProxyState = {
   exists: boolean;
   active: boolean;
@@ -97,14 +92,6 @@ function formatExpiry(ms: number | null) {
   return new Date(ms).toLocaleString();
 }
 
-function buildAuthHref(launchContext: DubheWalletLaunchContext | null) {
-  const params = new URLSearchParams();
-  if (launchContext?.walletOrigin) {
-    params.set('wallet', launchContext.walletOrigin);
-  }
-  return params.size > 0 ? `/auth/dubhe?${params.toString()}` : '/auth/dubhe';
-}
-
 function readPendingProxyAction(): PendingProxyAction | null {
   if (typeof window === 'undefined') {
     return null;
@@ -136,7 +123,6 @@ export default function ProxyOnboardingCard() {
   const { connectionStatus } = useCurrentWallet();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [launchContext, setLaunchContext] = useState<DubheWalletLaunchContext | null>(null);
-  const [connectIdentity, setConnectIdentity] = useState<ConnectIdentity>(null);
   const [storedProxyContext, setStoredProxyContext] = useState<ReturnType<typeof readNumeronProxyContext>>(null);
   const [isClientReady, setIsClientReady] = useState(false);
   const [proxyState, setProxyState] = useState<ProxyState>({
@@ -160,22 +146,18 @@ export default function ProxyOnboardingCard() {
   const ownerAddress = connectedBrowserWallet
     ? currentAccount?.address ?? null
     : launchContext?.walletAddress ??
-      connectIdentity?.address ??
       storedProxyContext?.ownerAddress ??
       null;
   const walletOrigin =
     launchContext?.walletOrigin ??
-    connectIdentity?.walletOrigin ??
     storedProxyContext?.walletOrigin ??
     DEFAULT_DUBHE_WALLET_ORIGIN;
   const walletNetwork =
     (connectedBrowserWallet ? browserWalletNetwork : null) ??
     launchContext?.walletNetwork ??
-    connectIdentity?.network ??
     NETWORK;
   const proxyAddress = walletUtils.getSignerAddress();
   const bridgeClient = useMemo(() => createDubheWalletBridgeClient({ walletOrigin }), [walletOrigin]);
-  const authHref = useMemo(() => buildAuthHref(launchContext), [launchContext]);
   const canUseProxy = proxyRuntime.available && Boolean(FRAMEWORK_PACKAGE_ID);
   const canUseBrowserWallet = connectedBrowserWallet && currentAccount?.address === ownerAddress;
 
@@ -227,7 +209,6 @@ export default function ProxyOnboardingCard() {
 
   const refreshLaunchState = () => {
     setLaunchContext(resolveCurrentDubheWalletLaunchContext());
-    setConnectIdentity(readDubheConnectIdentity());
     setStoredProxyContext(readNumeronProxyContext());
   };
 
@@ -566,7 +547,7 @@ export default function ProxyOnboardingCard() {
       ) : null}
       {showWalletHint ? (
         <div style={{ color: '#334155', lineHeight: 1.5 }}>
-          Connect a browser Sui wallet, open Numeron from Dubhe Wallet, or <Link href={authHref}>sign in with Dubhe Connect</Link> first.
+          Connect a browser Sui wallet or open Numeron from Dubhe Wallet first.
         </div>
       ) : null}
       {isClientReady && !currentAccount ? (

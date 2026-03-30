@@ -9,6 +9,7 @@ import { publishChannelEvent } from '@/lib/channel-events';
 import { DUBHE_SCHEMA_ID, PACKAGE_ID } from '@/config/contractDeployment';
 
 const LOCAL_PLAYER_MOVE_DURATION_MS = Number(process.env.NEXT_PUBLIC_FAST_MOVE_DURATION_MS || 48);
+const AUTHORITATIVE_SYNC_GRACE_MS = Number(process.env.NEXT_PUBLIC_POSITION_SYNC_GRACE_MS || 900);
 const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
   ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
   : process.env.NODE_ENV !== 'production';
@@ -61,6 +62,7 @@ export class Character {
   _currentTween?: Phaser.Tweens.Tween; // Track current movement tween to prevent animation stacking
   _isCurrentPlayer: boolean;
   _pendingChainMovements: number;
+  _lastLocalMovementAtMs: number;
 
   constructor(config: CharacterConfig) {
     if (this.constructor === Character) {
@@ -86,6 +88,7 @@ export class Character {
     this.dubhe = config.dubhe;
     this._isCurrentPlayer = config.isCurrentPlayer || false;
     this._pendingChainMovements = 0;
+    this._lastLocalMovementAtMs = 0;
 
     // Create address label if playerAddress is provided
     if (config.playerAddress) {
@@ -251,6 +254,19 @@ export class Character {
 
   get isChainMovementPending(): boolean {
     return this._pendingChainMovements > 0;
+  }
+
+  shouldIgnoreAuthoritativePosition(position: Coordinate): boolean {
+    const matchesTarget = this._targetPosition.x === position.x && this._targetPosition.y === position.y;
+    if (matchesTarget) {
+      return false;
+    }
+
+    if (this._isMoving || this.isChainMovementPending) {
+      return true;
+    }
+
+    return Date.now() - this._lastLocalMovementAtMs < AUTHORITATIVE_SYNC_GRACE_MS;
   }
 
   _emitMovementStage(summary: string, detail?: string, source: 'fast_path' | 'submit_ack' | 'system' = 'system') {
@@ -458,6 +474,7 @@ export class Character {
 
         moveUpTx.setSender(walletUtils.getChannelSubmitSenderAddress());
         const submittedTargetPosition = { ...this._targetPosition };
+        this._lastLocalMovementAtMs = Date.now();
         this._pendingChainMovements += 1;
         const targetTileLabel = `${submittedTargetPosition.x},${submittedTargetPosition.y}`;
         const movementIntentPromise = publishChannelEvent({

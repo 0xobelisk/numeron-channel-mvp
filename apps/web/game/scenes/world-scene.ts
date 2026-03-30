@@ -1510,6 +1510,17 @@ export class WorldScene extends BaseScene {
     const worldX = x * TILE_SIZE;
     const worldY = y * TILE_SIZE;
 
+    if (this.#player.shouldIgnoreAuthoritativePosition({ x: worldX, y: worldY })) {
+      this.#debugLog('Ignoring stale current-player sync', {
+        incoming: { x: worldX, y: worldY },
+        target: this.#player._targetPosition,
+        previous: this.#player._previousTargetPosition,
+        isMoving: this.#player.isMoving,
+        pending: this.#player.isChainMovementPending,
+      });
+      return;
+    }
+
     dataManager.store.set(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION, {
       x: worldX,
       y: worldY,
