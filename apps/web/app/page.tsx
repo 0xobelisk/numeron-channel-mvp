@@ -1,16 +1,10 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ProxyOnboardingCard from '@/app/components/ProxyOnboardingCard';
 import { DIRECTION, Direction } from '@/game/common/direction';
 import { IPropsPhaserGame, IRefPhaserGame } from '@/game/phaser-game';
-import {
-  clearDubheConnectIdentity,
-  readDubheConnectIdentity,
-} from '@/lib/dubhe-connect';
-import { resolveCurrentDubheWalletLaunchContext } from '@/lib/dubhe-wallet-launch';
 
 type VirtualAction = 'space' | 'enter' | 'back' | 'fullscreen';
 
@@ -37,15 +31,6 @@ function Page() {
   const phaserRef = useRef<IRefPhaserGame | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [isPortrait, setIsPortrait] = useState(false);
-  const [connectIdentity, setConnectIdentity] = useState(() =>
-    readDubheConnectIdentity()
-  );
-  const [launchContext, setLaunchContext] = useState(() =>
-    typeof window === 'undefined' ? null : resolveCurrentDubheWalletLaunchContext()
-  );
-  const authHref = launchContext?.walletOrigin
-    ? `/auth/dubhe?wallet=${encodeURIComponent(launchContext.walletOrigin)}`
-    : '/auth/dubhe';
 
   const getVirtualControls = useCallback((): VirtualControlsBridge | undefined => {
     const scene = phaserRef.current?.scene as { _controls?: VirtualControlsBridge } | null;
@@ -127,97 +112,21 @@ function Page() {
     };
   }, [clearVirtualDirection, isTouchDevice]);
 
-  useEffect(() => {
-    const refreshIdentity = () => {
-      setConnectIdentity(readDubheConnectIdentity());
-      setLaunchContext(resolveCurrentDubheWalletLaunchContext());
-    };
-
-    refreshIdentity();
-    window.addEventListener('focus', refreshIdentity);
-    document.addEventListener('visibilitychange', refreshIdentity);
-
-    return () => {
-      window.removeEventListener('focus', refreshIdentity);
-      document.removeEventListener('visibilitychange', refreshIdentity);
-    };
-  }, []);
-
   return (
     <div id="app" className="numeron-app">
-      <div
-        style={{
-          position: 'absolute',
+        <div
+          style={{
+            position: 'absolute',
           top: 'calc(10px + env(safe-area-inset-top))',
           left: 'calc(10px + env(safe-area-inset-left))',
           zIndex: 40,
           display: 'grid',
           gap: 6,
-          pointerEvents: 'auto',
-        }}
-      >
-        <Link
-          href={authHref}
-          style={{
-            textDecoration: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: 34,
-            borderRadius: 10,
-            padding: '0 12px',
-            background: 'rgba(15, 23, 42, 0.9)',
-            color: '#f8fafc',
-            fontSize: 12,
-            fontWeight: 800,
-            border: '1px solid rgba(148, 163, 184, 0.5)',
-            backdropFilter: 'blur(2px)',
+            pointerEvents: 'auto',
           }}
         >
-          {connectIdentity ? 'Dubhe Signed In' : 'Dubhe Sign-in'}
-        </Link>
-        {connectIdentity ? (
-          <div
-            style={{
-              borderRadius: 10,
-              border: '1px solid rgba(148, 163, 184, 0.55)',
-              background: 'rgba(241, 245, 249, 0.9)',
-              color: '#0f172a',
-              padding: '8px 10px',
-              minWidth: 220,
-              display: 'grid',
-              gap: 6,
-              fontSize: 12,
-            }}
-          >
-            <div style={{ fontWeight: 700 }}>
-              {connectIdentity.address.slice(0, 10)}...{connectIdentity.address.slice(-8)}
-            </div>
-            <div style={{ color: '#334155' }}>{connectIdentity.network}</div>
-            <button
-              style={{
-                border: '1px solid rgba(248, 113, 113, 0.5)',
-                background: 'rgba(255, 241, 242, 0.95)',
-                color: '#9f1239',
-                borderRadius: 8,
-                height: 28,
-                padding: '0 8px',
-                width: 'fit-content',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-              }}
-              onClick={() => {
-                clearDubheConnectIdentity();
-                setConnectIdentity(null);
-              }}
-            >
-              Clear Identity
-            </button>
-          </div>
-        ) : null}
-        <ProxyOnboardingCard />
-      </div>
+          <ProxyOnboardingCard />
+        </div>
       <div className="numeron-game-shell">
         <PhaserGame ref={phaserRef} setCanMoveSprite={setCanMoveSprite} />
         {isTouchDevice && !isPortrait && (
