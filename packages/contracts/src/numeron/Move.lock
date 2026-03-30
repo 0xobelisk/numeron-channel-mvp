@@ -5,7 +5,7 @@
 version = 4
 
 [pinned.testnet.Dubhe]
-source = { git = "https://github.com/0xobelisk/dubhe.git", subdir = "framework/src/dubhe", rev = "0c35edcfa319c7cc157bbd97c5b876f07ea6801a" }
+source = { git = "https://github.com/0xobelisk/dubhe.git", subdir = "framework/src/dubhe", rev = "2cca3af270585684825797cb2d909a8b1ff4f896" }
 use_environment = "testnet"
 manifest_digest = "21C4ACDE8D1A1E22F33EBBF539FC94BA72EC8B363E3A9B495D51C157AAB5189C"
 deps = { Sui = "Sui" }
@@ -25,5 +25,5 @@ deps = { MoveStdlib = "MoveStdlib" }
 [pinned.testnet.numeron]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "A116990C7C7B11DEB2B7B2D601765D09833DAB1E336BC7AB557119D8802CD483"
+manifest_digest = "A5B373FF50034E870E70AF76CF632EC63EEBC4AE6DA073AFFDC0DBB177C0BB20"
 deps = { Dubhe = "Dubhe", Sui = "Sui" }
