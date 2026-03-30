@@ -4,7 +4,12 @@ import Link from 'next/link';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Transaction } from '@0xobelisk/sui-client';
-import { ConnectButton, useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import {
+  ConnectButton,
+  useCurrentAccount,
+  useCurrentWallet,
+  useSignAndExecuteTransaction,
+} from '@mysten/dapp-kit';
 import {
   FRAMEWORK_PACKAGE_ID,
   NETWORK,
@@ -128,6 +133,7 @@ function writePendingProxyAction(action: PendingProxyAction | null) {
 
 export default function ProxyOnboardingCard() {
   const currentAccount = useCurrentAccount();
+  const { connectionStatus } = useCurrentWallet();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [launchContext, setLaunchContext] = useState<DubheWalletLaunchContext | null>(null);
   const [connectIdentity, setConnectIdentity] = useState<ConnectIdentity>(null);
@@ -148,23 +154,30 @@ export default function ProxyOnboardingCard() {
     reason: null,
   });
 
-  const ownerAddress =
-    launchContext?.walletAddress ??
-    currentAccount?.address ??
-    connectIdentity?.address ??
-    storedProxyContext?.ownerAddress ??
-    null;
+  const browserWalletChain = currentAccount?.chains?.find((chain) => chain.startsWith('sui:')) ?? null;
+  const browserWalletNetwork = browserWalletChain?.slice('sui:'.length) ?? null;
+  const connectedBrowserWallet = connectionStatus === 'connected' && Boolean(currentAccount?.address);
+  const ownerAddress = connectedBrowserWallet
+    ? currentAccount?.address ?? null
+    : launchContext?.walletAddress ??
+      connectIdentity?.address ??
+      storedProxyContext?.ownerAddress ??
+      null;
   const walletOrigin =
     launchContext?.walletOrigin ??
     connectIdentity?.walletOrigin ??
     storedProxyContext?.walletOrigin ??
     DEFAULT_DUBHE_WALLET_ORIGIN;
-  const walletNetwork = launchContext?.walletNetwork ?? connectIdentity?.network ?? NETWORK;
+  const walletNetwork =
+    (connectedBrowserWallet ? browserWalletNetwork : null) ??
+    launchContext?.walletNetwork ??
+    connectIdentity?.network ??
+    NETWORK;
   const proxyAddress = walletUtils.getSignerAddress();
   const bridgeClient = useMemo(() => createDubheWalletBridgeClient({ walletOrigin }), [walletOrigin]);
   const authHref = useMemo(() => buildAuthHref(launchContext), [launchContext]);
   const canUseProxy = proxyRuntime.available && Boolean(FRAMEWORK_PACKAGE_ID);
-  const canUseBrowserWallet = Boolean(currentAccount) && currentAccount?.address === ownerAddress;
+  const canUseBrowserWallet = connectedBrowserWallet && currentAccount?.address === ownerAddress;
 
   const executeOwnerTransaction = async ({
     tx,
