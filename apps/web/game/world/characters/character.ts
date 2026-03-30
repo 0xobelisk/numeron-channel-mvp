@@ -456,7 +456,7 @@ export class Character {
           isRaw: true,
         });
 
-        moveUpTx.setSender(walletUtils.getCurrentAccount().address);
+        moveUpTx.setSender(walletUtils.getChannelSubmitSenderAddress());
         const submittedTargetPosition = { ...this._targetPosition };
         this._pendingChainMovements += 1;
         const targetTileLabel = `${submittedTargetPosition.x},${submittedTargetPosition.y}`;
@@ -525,7 +525,7 @@ export class Character {
           try {
             const submitToChannelRes = await walletUtils.submitTransactionToChannel({
               tx: moveUpTx,
-              sender: walletUtils.getCurrentAccount().address,
+              sender: walletUtils.getChannelSubmitSenderAddress(),
               dubheClient: this.dubhe,
             });
             this._debugLog('submitToChannel result:', submitToChannelRes);

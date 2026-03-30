@@ -166,6 +166,16 @@ class WalletUtils {
     return this.#bootstrapAddress;
   }
 
+  public getChannelSubmitSenderAddress(): string {
+    this.ensureBrowserIdentity();
+    const proxyContext = readNumeronProxyContext();
+    if (proxyContext && isNumeronProxyContextActive(proxyContext, this.#bootstrapAddress)) {
+      return this.#bootstrapAddress;
+    }
+
+    return this.getCurrentAccount().address;
+  }
+
   public resetCurrentPlayerToBootstrap(): string {
     this.ensureBrowserIdentity();
     this.#selectedPlayerAddress = this.#bootstrapAddress;
@@ -239,7 +249,7 @@ class WalletUtils {
     dubheClient?: Dubhe;
   }) {
     const client = dubheClient || this.dubhe;
-    const resolvedSender = sender || this.getCurrentAccount().address;
+    const resolvedSender = sender || this.getChannelSubmitSenderAddress();
     tx.setSender(resolvedSender);
 
     let lastError: unknown = null;
@@ -368,7 +378,7 @@ class WalletUtils {
   }): Promise<SuiTransactionBlockResponse | null> {
     try {
       if (this.shouldSubmitThroughChannel()) {
-        const sender = channelSender || this.getCurrentAccount().address;
+        const sender = channelSender || this.getChannelSubmitSenderAddress();
         const result = await this.submitTransactionToChannel({
           tx,
           sender,
