@@ -37,6 +37,7 @@ class WalletUtils {
   #registerSenderAddress: string | null =
     process.env.NEXT_PUBLIC_CHANNEL_REGISTER_SENDER || DEFAULT_REGISTER_SENDER_BY_NETWORK[NETWORK] || null;
   #channelNonceBySender: Map<string, number> = new Map();
+  #channelSubmitQueueBySender: Map<string, Promise<void>> = new Map();
   #signingSecretKey: string;
 
   private constructor() {
@@ -229,6 +230,27 @@ class WalletUtils {
     this.#channelNonceBySender.set(sender, nextNonce);
   }
 
+  private async runSerializedChannelSubmit<T>(sender: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.#channelSubmitQueueBySender.get(sender) || Promise.resolve();
+    let release!: () => void;
+    const lock = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => lock);
+    this.#channelSubmitQueueBySender.set(sender, next);
+
+    await previous.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.#channelSubmitQueueBySender.get(sender) === next) {
+        this.#channelSubmitQueueBySender.delete(sender);
+      }
+    }
+  }
+
   private extractExpectedNonce(error: unknown): number | null {
     const message = error instanceof Error ? error.message : String(error);
     const match = message.match(/Invalid nonce: expected (\d+), got (\d+)/i);
@@ -252,43 +274,43 @@ class WalletUtils {
     const resolvedSender = sender || this.getChannelSubmitSenderAddress();
     tx.setSender(resolvedSender);
 
-    let lastError: unknown = null;
+    return this.runSerializedChannelSubmit(resolvedSender, async () => {
+      let lastError: unknown = null;
 
-    for (let attempt = 0; attempt < CHANNEL_NONCE_RETRY_LIMIT; attempt += 1) {
-      const nonce = await this.reserveChannelNonce(client, resolvedSender);
+      for (let attempt = 0; attempt < CHANNEL_NONCE_RETRY_LIMIT; attempt += 1) {
+        const nonce = await this.reserveChannelNonce(client, resolvedSender);
 
-      try {
-        return await submitChannelTransaction({
-          channelUrl: this.getChannelUrl(),
-          chain: this.detectChainType(resolvedSender),
-          sender: resolvedSender,
-          tx,
-          nonce,
-        });
-      } catch (error) {
-        lastError = error;
-        const expectedNonce = this.extractExpectedNonce(error);
-        if (expectedNonce == null) {
-          this.invalidateChannelNonce(resolvedSender);
-          throw error;
+        try {
+          return await submitChannelTransaction({
+            channelUrl: this.getChannelUrl(),
+            chain: this.detectChainType(resolvedSender),
+            sender: resolvedSender,
+            tx,
+            nonce,
+          });
+        } catch (error) {
+          lastError = error;
+          const expectedNonce = this.extractExpectedNonce(error);
+          if (expectedNonce == null) {
+            this.invalidateChannelNonce(resolvedSender);
+            throw error;
+          }
+
+          this.debugLog('Retrying channel submit after nonce mismatch', {
+            sender: resolvedSender,
+            attempt: attempt + 1,
+            expectedNonce,
+            submittedNonce: nonce,
+          });
+          this.setChannelNonce(resolvedSender, expectedNonce);
+
+          await new Promise(resolve => window.setTimeout(resolve, 40 * (attempt + 1)));
         }
-
-        this.debugLog('Retrying channel submit after nonce mismatch', {
-          sender: resolvedSender,
-          attempt: attempt + 1,
-          expectedNonce,
-          submittedNonce: nonce,
-        });
-        this.setChannelNonce(resolvedSender, expectedNonce);
-
-        // Shared admin senders can race across tabs/users; a short backoff gives the
-        // next reservation a chance to observe the freshest nonce.
-        await new Promise(resolve => window.setTimeout(resolve, 40 * (attempt + 1)));
       }
-    }
 
-    this.invalidateChannelNonce(resolvedSender);
-    throw (lastError instanceof Error ? lastError : new Error(String(lastError)));
+      this.invalidateChannelNonce(resolvedSender);
+      throw (lastError instanceof Error ? lastError : new Error(String(lastError)));
+    });
   }
 
   public setChannelUrl(channelUrl: string): void {
