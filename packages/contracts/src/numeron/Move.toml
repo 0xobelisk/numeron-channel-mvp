@@ -5,8 +5,12 @@ edition = "2024"
 
 [dependencies]
 Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "mainnet-v1.46.3" }
-Dubhe = { git = "https://github.com/0xobelisk/dubhe.git", subdir = "framework/src/dubhe", rev = "v1.2.0-pre.94" }
+Dubhe = { git = "https://github.com/0xobelisk/dubhe.git", subdir = "framework/src/dubhe", rev = "v1.2.0-pre.115" }
 
 [addresses]
 sui = "0x2"
 numeron = "0x0"
+
+[environments]
+testnet = "4c78adac"
+localnet = "44282fcc"

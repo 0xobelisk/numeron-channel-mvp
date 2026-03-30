@@ -18,7 +18,7 @@ public entry fun force_register(dapp_hub: &mut DappHub, player: String, x: u64, 
 }
 
 public entry fun move_position(dapp_hub: &mut DappHub, direction: u8, ctx: &mut TxContext) {
-    let player = address_system::ensure_origin(ctx);
+    let player = address_system::ensure_origin<DappKey>(dapp_hub, ctx);
     errors::not_registered_error(position::has(dapp_hub, player));
 
     let (mut x, mut y) = position::get(dapp_hub, player);

@@ -7,12 +7,14 @@ import {
   Transaction,
   bcs,
 } from '@0xobelisk/sui-client';
-import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from 'contracts/deployment';
+import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from '@/config/contractDeployment';
 import { InventoryItem, ITEM_EFFECT, ItemCategory, LOCATION_TYPE, Monster } from '@/game/types/typedef';
-import { PlayerLocation } from '@/game/utils/data-manager';
+import { DATA_MANAGER_STORE_KEYS, PlayerLocation, dataManager } from '@/game/utils/data-manager';
 import { TILE_SIZE } from '@/game/config';
+import { DEFAULT_CHANNEL_URL, DEFAULT_NETWORK_ENDPOINT } from '@/lib/channel-config';
 import contractMetadata from 'contracts/metadata.json';
 import dubheMetadata from 'contracts/dubhe.config.json';
+import { walletUtils } from '@/game/utils/wallet-utils';
 
 export interface CraftPath {
   id: string;
@@ -46,7 +48,6 @@ export class DubheService {
   #selectedPlayerAddress: string | null = null;
 
   constructor() {
-    let PRIVATEKEY = process.env.NEXT_PUBLIC_PRIVATE_KEY;
     if (NETWORK === 'localnet') {
       this.endpoint = {
         http: 'http://127.0.0.1:4000/graphql',
@@ -54,18 +55,15 @@ export class DubheService {
         grpc: 'http://127.0.0.1:8080',
       };
     } else if (NETWORK === 'testnet') {
-      this.endpoint = {
-        http: 'https://testnet-indexer.numeron.world',
-        ws: 'wss://testnet-indexer.numeron.world',
-        grpc: 'https://testnet-indexer.numeron.world',
-      };
+      this.endpoint = DEFAULT_NETWORK_ENDPOINT;
     }
 
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: PRIVATEKEY
+      secretKey: walletUtils.getSigningSecretKey(),
+      channelUrl: DEFAULT_CHANNEL_URL,
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
@@ -154,10 +152,18 @@ export class DubheService {
   }
 
   async getPlayerPosition(): Promise<{ x: number; y: number; location: PlayerLocation }> {
-    const playerPositionData = await this.dubhe.queryChannelTable({
-      table: 'position',
-      key: [],
-    });
+    const account = walletUtils.getCurrentAccountContractKey();
+    let playerPositionData;
+    try {
+      playerPositionData = await this.dubhe.queryChannelTable({
+        account,
+        table: 'position',
+        key: [],
+      });
+    } catch (error) {
+      console.warn('getPlayerPosition lookup failed, falling back to default spawn', error);
+      return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+    }
 
     if (playerPositionData && playerPositionData.data) {
       // Parse x and y coordinates using bcs
@@ -174,6 +180,32 @@ export class DubheService {
       };
     }
     return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+  }
+
+  async blanceOf() {
+    return walletUtils.blanceOf({});
+  }
+
+  async getOwnedMonsters(): Promise<Monster[]> {
+    return [];
+  }
+
+  async getOwnedItems(): Promise<InventoryItem[]> {
+    return dataManager.store.get(DATA_MANAGER_STORE_KEYS.INVENTORY) || [];
+  }
+
+  async itemMetadatas(): Promise<ItemMetadata[]> {
+    return [];
+  }
+
+  async craftItem(itemId: string): Promise<{ txUrl: string }> {
+    return {
+      txUrl: `https://suiexplorer.com/?network=${this.network}`,
+    };
+  }
+
+  async queryItemCraftPath(): Promise<CraftPath[]> {
+    return [];
   }
 
   /**

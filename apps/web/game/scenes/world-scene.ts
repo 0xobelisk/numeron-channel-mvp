@@ -3,7 +3,7 @@ import { SCENE_KEYS } from './scene-keys';
 import { Player } from '../world/characters/player';
 import { DIRECTION, Direction } from '../common/direction';
 import { ENABLE_ZONE_DEBUGGING, TILED_COLLISION_LAYER_ALPHA, TILE_SIZE } from '../config';
-import { DATA_MANAGER_STORE_KEYS, dataManager } from '../utils/data-manager';
+import { DATA_MANAGER_STORE_KEYS, dataManager, initialState } from '../utils/data-manager';
 import {
   getTargetDirectionFromGameObjectPosition,
   getTargetPathToGameObject,
@@ -38,12 +38,12 @@ import {
 } from '../types/typedef';
 import { PlayerLocation } from '../utils/data-manager';
 import { Dubhe, loadMetadata, SuiMoveNormalizedModules, Transaction, bcs, fromHex, toHex } from '@0xobelisk/sui-client';
-import { DUBHE_SCHEMA_ID, NETWORK, PACKAGE_ID } from 'contracts/deployment';
+import { buildChannelDappKey, subscribeChannel, type ChannelEventEnvelope } from '@/lib/channel-events';
+import { DUBHE_SCHEMA_ID, NETWORK, PACKAGE_ID } from '@/config/contractDeployment';
 import { ChatScene } from './chat-scene';
 import { MessageType } from './chat-scene';
 import { walletUtils } from '../utils/wallet-utils';
 import contractMetadata from 'contracts/metadata.json';
-import { nonceManager } from '../utils/nonce-manager';
 
 export type TiledObjectProperty = {
   name: string;
@@ -91,6 +91,105 @@ export type WorldSceneData = {
   isInterior?: boolean;
 };
 
+type TransactionFeedSource = 'fast_path' | 'submit_ack' | 'subscription' | 'intent' | 'system';
+
+type MovementIntentPayload = {
+  player: string;
+  x: number;
+  y: number;
+  direction?: Direction;
+};
+
+type TransactionFeedDebugEntry = {
+  sequence: number;
+  summary: string;
+  detail?: string;
+  source: TransactionFeedSource;
+  observedAtMs: number;
+  displayText: string;
+};
+
+function parsePositiveIntEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeIntEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+const IS_DEV_RUNTIME = process.env.NODE_ENV !== 'production';
+const ENABLE_NUMERON_DEBUG = process.env.NEXT_PUBLIC_ENABLE_NUMERON_DEBUG === 'true';
+const ENABLE_TRANSACTION_FEED_UI = process.env.NEXT_PUBLIC_CHANNEL_FEED_UI
+  ? process.env.NEXT_PUBLIC_CHANNEL_FEED_UI === 'true'
+  : IS_DEV_RUNTIME || ENABLE_NUMERON_DEBUG;
+const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
+  ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
+  : IS_DEV_RUNTIME;
+const ENABLE_ITEM_DROPPED_SUBSCRIPTION = process.env.NEXT_PUBLIC_CHANNEL_ITEM_DROPPED
+  ? process.env.NEXT_PUBLIC_CHANNEL_ITEM_DROPPED === 'true'
+  : ENABLE_NUMERON_DEBUG;
+const REMOTE_PLAYER_INTENT_MOVE_DURATION_MS = Number(process.env.NEXT_PUBLIC_REMOTE_INTENT_MOVE_DURATION_MS || 56);
+const REMOTE_PLAYER_TTL_MS = parsePositiveIntEnv(process.env.NEXT_PUBLIC_REMOTE_PLAYER_TTL_MS, 20_000);
+const REMOTE_PLAYER_CLEANUP_INTERVAL_MS = parsePositiveIntEnv(
+  process.env.NEXT_PUBLIC_REMOTE_PLAYER_CLEANUP_INTERVAL_MS,
+  1_000,
+);
+const MAX_REMOTE_PLAYERS = parseNonNegativeIntEnv(process.env.NEXT_PUBLIC_MAX_REMOTE_PLAYERS, 16);
+const REMOTE_LABELS_DEFAULT_VISIBLE = process.env.NEXT_PUBLIC_REMOTE_LABELS_DEFAULT_VISIBLE === 'true';
+const REMOTE_LABEL_DISTANCE_TILES = parsePositiveIntEnv(process.env.NEXT_PUBLIC_REMOTE_LABEL_DISTANCE_TILES, 3);
+const REMOTE_LABEL_DISTANCE_PX = REMOTE_LABEL_DISTANCE_TILES * TILE_SIZE;
+const REMOTE_LABEL_DISTANCE_PX_SQUARED = REMOTE_LABEL_DISTANCE_PX * REMOTE_LABEL_DISTANCE_PX;
+const REMOTE_LABEL_VISIBILITY_UPDATE_INTERVAL_MS = parsePositiveIntEnv(
+  process.env.NEXT_PUBLIC_REMOTE_LABEL_UPDATE_INTERVAL_MS,
+  120,
+);
+const CHANNEL_DAPP_KEY = buildChannelDappKey(PACKAGE_ID);
+const REGISTER_POSITION_WAIT_TIMEOUT_MS = 10_000;
+const REGISTER_POSITION_POLL_INTERVAL_MS = 250;
+const REGISTER_SPAWN_POINTS = [
+  { x: 1, y: 1 },
+  { x: 4, y: 1 },
+  { x: 7, y: 1 },
+  { x: 10, y: 1 },
+  { x: 1, y: 2 },
+  { x: 4, y: 2 },
+  { x: 7, y: 2 },
+  { x: 10, y: 2 },
+  { x: 1, y: 4 },
+  { x: 4, y: 4 },
+  { x: 7, y: 4 },
+  { x: 10, y: 4 },
+  { x: 1, y: 5 },
+  { x: 4, y: 5 },
+  { x: 7, y: 5 },
+  { x: 10, y: 5 },
+] as const;
+
+function getRegisterSpawnPoint(accountKey: string) {
+  let hash = 0;
+  for (const char of accountKey.replace(/^0x/, '').toLowerCase()) {
+    hash = (hash * 33 + char.charCodeAt(0)) >>> 0;
+  }
+
+  return REGISTER_SPAWN_POINTS[hash % REGISTER_SPAWN_POINTS.length];
+}
+
+function normalizePlayerAccount(address: string) {
+  return address.replace(/^0x/, '').toLowerCase();
+}
+
+function toCanonicalPlayerAddress(address: string) {
+  return `0x${normalizePlayerAccount(address)}`;
+}
+
 /*
   Our scene will be 16 x 9 (1024 x 576 pixels)
   each grid size will be 64 x 64 pixels
@@ -98,6 +197,7 @@ export type WorldSceneData = {
 
 export class WorldScene extends BaseScene {
   #player: Player;
+  #collisionLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   #encounterLayers: Phaser.Tilemaps.TilemapLayer[];
   #wildMonsterEncountered: boolean;
   #signLayer: Phaser.Tilemaps.ObjectLayer | undefined;
@@ -123,11 +223,16 @@ export class WorldScene extends BaseScene {
   #encounterZonePlayerIsEntering: Phaser.Tilemaps.TilemapLayer | undefined;
   dubhe: Dubhe;
   schemaId: string;
-  subscription: (() => void) | null;
-  #otherPlayers: Map<string, Player>;
-  #transactionFeedContainer: Phaser.GameObjects.Container;
-  #transactionFeedTexts: Phaser.GameObjects.Text[];
+  subscription: (() => void) | null = null;
+  #otherPlayers: Map<string, Player> = new Map();
+  #otherPlayerLastSeenMs: Map<string, number> = new Map();
+  #lastOtherPlayerCleanupAtMs: number = 0;
+  #lastRemoteLabelUpdateAtMs: number = 0;
+  #transactionFeedContainer: Phaser.GameObjects.Container | null = null;
+  #transactionFeedTexts: Phaser.GameObjects.Text[] = [];
+  #transactionFeedDebugEntries: TransactionFeedDebugEntry[] = [];
   #maxFeedItems: number = 8;
+  #nextTransactionFeedSequence: number = 1;
 
   constructor() {
     super({
@@ -135,15 +240,30 @@ export class WorldScene extends BaseScene {
     });
   }
 
+  #debugLog(...args: unknown[]) {
+    if (!ENABLE_CHANNEL_VERBOSE_LOGS) {
+      return;
+    }
+
+    console.log('[WorldScene]', ...args);
+  }
+
   async init(data: WorldSceneData) {
     super.init(data);
     this.#sceneData = data;
 
     // handle when some of the fields for scene data are not populated, default to values provided, otherwise use safe defaults
-    const area: string = this.#sceneData?.area || dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION).area;
+    const storeLocation = dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION) as
+      | PlayerLocation
+      | undefined;
+    const areaCandidate = this.#sceneData?.area ?? storeLocation?.area ?? initialState.player.location.area;
+    const area =
+      typeof areaCandidate === 'string' && areaCandidate.trim().length > 0
+        ? areaCandidate
+        : initialState.player.location.area;
     let isInterior = this.#sceneData?.isInterior;
     if (isInterior === undefined) {
-      isInterior = dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION).isInterior;
+      isInterior = storeLocation?.isInterior ?? initialState.player.location.isInterior;
     }
     const isPlayerKnockedOut = this.#sceneData?.isPlayerKnockedOut || false;
 
@@ -163,7 +283,11 @@ export class WorldScene extends BaseScene {
       )?.value;
 
       // check to see if the level data we need to load is different and load that map to get player spawn data
-      if (knockOutSpawnLocation !== this.#sceneData.area) {
+      if (
+        typeof knockOutSpawnLocation === 'string' &&
+        knockOutSpawnLocation.trim().length > 0 &&
+        knockOutSpawnLocation !== this.#sceneData.area
+      ) {
         this.#sceneData.area = knockOutSpawnLocation;
         map = this.make.tilemap({ key: `${this.#sceneData.area.toUpperCase()}_LEVEL` });
       }
@@ -202,22 +326,25 @@ export class WorldScene extends BaseScene {
     this.#lastCutSceneEventHandledIndex = -1;
     this.#specialEncounterTileImageGameObjectGroup = undefined;
     this.#encounterZonePlayerIsEntering = undefined;
+    this.#otherPlayers = new Map();
+    this.#otherPlayerLastSeenMs = new Map();
+    this.#lastOtherPlayerCleanupAtMs = 0;
+    this.#lastRemoteLabelUpdateAtMs = 0;
+    this.#transactionFeedTexts = [];
+    this.#transactionFeedDebugEntries = [];
+    this.#nextTransactionFeedSequence = 1;
   }
 
   async create() {
     super.create();
-    
-    // Initialize nonce manager for channel transactions
-    await nonceManager.initialize();
-    console.log('[WorldScene] Nonce manager initialized');
-    
+
     // create rectangles for checking for overlaps between game objects, added so we can recycle game objects
     this.#rectangleForOverlapCheck1 = new Phaser.Geom.Rectangle();
     this.#rectangleForOverlapCheck2 = new Phaser.Geom.Rectangle();
     this.#rectangleOverlapResult = new Phaser.Geom.Rectangle();
     // 使用walletUtils获取账户信息
     const currentAccount = walletUtils.getCurrentAccount();
-    console.log('currentAccount', currentAccount);
+    this.#debugLog('currentAccount', currentAccount);
     // create map and collision layer
     const map = this.make.tilemap({ key: `${this.#sceneData.area.toUpperCase()}_LEVEL` });
     // The first parameter is the name of the tileset in Tiled and the second parameter is the key
@@ -233,6 +360,7 @@ export class WorldScene extends BaseScene {
       return;
     }
     collisionLayer.setAlpha(TILED_COLLISION_LAYER_ALPHA).setDepth(2);
+    this.#collisionLayer = collisionLayer;
 
     // create interactive layer
     const hasSignLayer = map.getObjectLayer('Sign') !== null;
@@ -249,33 +377,49 @@ export class WorldScene extends BaseScene {
     // create collision layer for encounters
     this.#createEncounterAreas(map);
 
+    const channelUrl = walletUtils.getChannelUrl();
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY
+      secretKey: walletUtils.getSigningSecretKey(),
+      channelUrl,
     });
 
     this.dubhe = dubhe;
     // let have_player = await walletUtils.graphqlClient.getTableByCondition('position', {
     //   player: walletUtils.getCurrentAccount().address,
     // });
-    let have_player = await walletUtils.dubhe.queryChannelTable({
-      table: 'position',
-      key: [],
-    })
+    const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+    const currentPlayerContractKey = walletUtils.getCurrentAccountContractKey();
+    let initialLookupFailed = false;
+    let have_player;
+    try {
+      have_player = await walletUtils.dubhe.queryChannelTable({
+        account: currentPlayerContractKey,
+        table: 'position',
+        key: [],
+      });
+    } catch (error) {
+      initialLookupFailed = true;
+      console.warn('initial player lookup failed, treating player as unregistered', error);
+      have_player = null;
+    }
 
-    console.log('=========have_player', have_player);
-    // // TODO: register new player
-    // if (!have_player) {
-    //   await this.registerNewPlayer(dubhe);
-    // }
-    // Subscribe to channel events
-    await this.subscribeToEvents();
-
+    const missingPlayerPosition = !have_player?.message || !have_player?.data?.[0] || !have_player?.data?.[1];
+    this.#debugLog('have_player', have_player);
+    if (initialLookupFailed || missingPlayerPosition) {
+      this.#debugLog('registering missing player', {
+        currentPlayerAddress,
+        currentPlayerContractKey,
+        initialLookupFailed,
+      });
+      await this.registerNewPlayer(dubhe);
+      await this.#waitForRegisteredPlayerPosition(currentPlayerContractKey);
+    }
     // Check if in teleport state
     const isTeleporting = dataManager.store.get('IS_TELEPORTING');
-    console.log('=========isTeleporting', isTeleporting);
+    this.#debugLog('isTeleporting', isTeleporting);
 
     if (!isTeleporting) {
       await dataManager.updatePlayerPosition();
@@ -295,12 +439,10 @@ export class WorldScene extends BaseScene {
     // this.#createNPCs(map);
 
     // Get current player address for display
-    const currentPlayerAddress = walletUtils.getCurrentAccount().address;
-
     this.#player = new Player({
       scene: this,
       position: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION),
-      direction: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_DIRECTION),
+      direction: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_DIRECTION) ?? DIRECTION.DOWN,
       collisionLayer: collisionLayer,
       spriteGridMovementFinishedCallback: () => {
         this.#handlePlayerMovementUpdate();
@@ -324,14 +466,15 @@ export class WorldScene extends BaseScene {
 
     // Set depth to ensure player is visible above background
     this.#player.sprite.setDepth(1);
+    this.#player.setAddressLabelVisible(true);
 
     this.cameras.main.startFollow(this.#player.sprite);
 
-    // Initialize other players map
-    this.#otherPlayers = new Map();
-
     // Load and create other players
     await this.#loadOtherPlayers(collisionLayer);
+
+    // Subscribe after world and player state are fully initialized.
+    await this.subscribeToEvents();
 
     // // update our collisions with npcs
     // this.#npcs.forEach(npc => {
@@ -382,7 +525,7 @@ export class WorldScene extends BaseScene {
     } else {
       // Scene doesn't exist or isn't running, need to initialize it
       if (!this.game.scene.getScene(SCENE_KEYS.CHAT_SCENE)) {
-        console.log('Adding Chat Scene to game');
+        this.#debugLog('Adding Chat Scene to game');
         this.game.scene.add(SCENE_KEYS.CHAT_SCENE, ChatScene);
       }
 
@@ -404,12 +547,55 @@ export class WorldScene extends BaseScene {
     // }
   }
 
+  async #waitForRegisteredPlayerPosition(playerAccountKey: string, timeoutMs = REGISTER_POSITION_WAIT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    let consecutiveLookupFailures = 0;
+
+    while (Date.now() < deadline) {
+      try {
+        const playerPosition = await walletUtils.dubhe.queryChannelTable({
+          account: playerAccountKey,
+          table: 'position',
+          key: [],
+        });
+
+        if (playerPosition?.message && playerPosition?.data?.[0] && playerPosition?.data?.[1]) {
+          return playerPosition;
+        }
+        consecutiveLookupFailures = 0;
+      } catch (error) {
+        consecutiveLookupFailures += 1;
+        this.#debugLog('waiting for registered player position', { playerAccountKey, error });
+        if (consecutiveLookupFailures >= 2) {
+          console.warn(
+            `[${WorldScene.name}] Aborting registered player wait after repeated lookup failures for ${playerAccountKey}.`,
+          );
+          return null;
+        }
+      }
+
+      await sleep(REGISTER_POSITION_POLL_INTERVAL_MS, this);
+    }
+
+    console.warn(
+      `[${WorldScene.name}] Timed out waiting for registered player position for ${playerAccountKey}; continuing with fallback spawn.`,
+    );
+    return null;
+  }
+
   async update(time: DOMHighResTimeStamp) {
     if (!this.#player) {
       return;
     }
 
     super.update(time);
+    const nowMs = Date.now();
+
+    if (nowMs - this.#lastOtherPlayerCleanupAtMs >= REMOTE_PLAYER_CLEANUP_INTERVAL_MS) {
+      this.#lastOtherPlayerCleanupAtMs = nowMs;
+      this.#pruneRemotePlayers(nowMs);
+    }
+    this.#updateRemotePlayerLabelVisibility(nowMs);
 
     if (this.#wildMonsterEncountered) {
       // If the player is encountering a monster, only update player state, don't process any input
@@ -429,7 +615,6 @@ export class WorldScene extends BaseScene {
     }
 
     const wasSpaceKeyPressed = this._controls.wasSpaceKeyPressed();
-    const selectedDirectionHeldDown = this._controls.getDirectionKeyPressedDown();
     const selectedDirectionPressedOnce = this._controls.getDirectionKeyJustPressed();
 
     if (this.#isProcessingCutSceneEvent) {
@@ -443,8 +628,10 @@ export class WorldScene extends BaseScene {
       return;
     }
 
-    if (selectedDirectionHeldDown !== DIRECTION.NONE && !this.#isPlayerInputLocked()) {
-      await this.#player.moveCharacter(selectedDirectionHeldDown);
+    // For channel-backed movement, only accept discrete direction presses.
+    // This avoids flooding v2/submit when a key is held down.
+    if (selectedDirectionPressedOnce !== DIRECTION.NONE && !this.#isPlayerInputLocked()) {
+      void this.#player.moveCharacter(selectedDirectionPressedOnce);
     }
 
     if (wasSpaceKeyPressed && !this.#player.isMoving) {
@@ -480,92 +667,160 @@ export class WorldScene extends BaseScene {
       if (this.subscription) {
         try {
           this.subscription();
-          console.log('Closed previous channel subscription to prevent duplicate messages');
+          this.#debugLog('Closed previous channel subscription to prevent duplicate messages');
         } catch (closeError) {
           console.warn('Failed to close channel subscription:', closeError);
         }
       }
 
-      console.log('========= subscribeToEvents - starting channel subscription');
-      
-      // Subscribe to all table changes for all accounts
-      const unsubscribe = await this.dubhe.subscribeChannelTable(
-        {
-          // Not specifying account to subscribe to all accounts
-          // Not specifying table to subscribe to all tables
-        },
-        {
-          // Callback when connection established
-          onOpen: () => {
-            console.log('✅ Successfully connected to channel subscription (all accounts & tables)');
-          },
+      this.#debugLog('starting channel subscriptions');
 
-          // Callback when receiving new data
-          onMessage: (data) => {
-            console.log('📨 Received update:', { table: data.table, account: data.account });
+      const onError = (error: Error) => {
+        console.error('❌ Subscription error:', error);
+      };
+      const onClose = () => {
+        this.#debugLog('Subscription connection closed');
+      };
+      const onOpen = (label: string) => {
+        this.#debugLog(`Successfully connected to ${label} channel subscription`);
+      };
 
-            // Only handle item_dropped events
-            if (data.table === 'item_dropped') {
+      const subscriptions = [
+        this.dubhe.subscribeChannelTable(
+          { table: 'position' },
+          {
+            onOpen: () => onOpen('position'),
+            onError,
+            onClose,
+            onMessage: data => {
+              const accountLabel = data.account ? `${data.account.slice(0, 6)}...${data.account.slice(-4)}` : 'unknown';
+              this.addTransactionFeedEntry(data.table, accountLabel, 'subscription');
+
               try {
-                // Parse item_dropped table data
-                const playerData = Uint8Array.from(data.value[0]);
-                const itemTypeData = Uint8Array.from(data.value[1]);
+                const xData = Uint8Array.from(data.value[0] || []);
+                const yData = Uint8Array.from(data.value[1] || []);
+                if (xData.length === 0 || yData.length === 0) {
+                  return;
+                }
 
-                const Address = bcs.bytes(32).transform({
-                  // To change the input type, you need to provide a type definition for the input
-                  input: (val: string) => fromHex(val),
-                  output: (val) => toHex(val)
-                });
+                const x = Number(bcs.u64().parse(xData));
+                const y = Number(bcs.u64().parse(yData));
+                const playerAddress = data.account.startsWith('0x') ? data.account : `0x${data.account}`;
+                if (playerAddress === walletUtils.getCurrentAccount().address) {
+                  this.#syncCurrentPlayerPosition(x, y);
+                  return;
+                }
 
-                // Parse player address (address type in Move)
-                const player = Address.parse(playerData);
-
-                // Register and parse ItemType enum
-                const ItemTypeBcs = bcs.enum('ItemType', {
-                  Ball: null,
-                  Currency: null,
-                  Food: null,
-                  Material: null,
-                  Medicine: null,
-                  Scroll: null,
-                  SkillBook: null,
-                  TreasureChest: null
-                });
-
-                const itemType = ItemTypeBcs.parse(itemTypeData);
-
-                console.log('🎁 Item dropped:');
-                console.log('  - Player:', player);
-                console.log('  - Item Type:', itemType);
-
-                // Call the existing handler with formatted data
-                this.#handleItemDroppedEvent({
-                  player: player,
-                  item_type: itemType.$kind,
+                void this.#handleOtherPlayerPositionUpdate({
+                  player: playerAddress,
+                  x,
+                  y,
                 });
               } catch (error) {
-                console.error('Failed to parse item_dropped data:', error);
-                console.error('Table:', data.table);
+                console.error('Failed to parse position data:', error);
                 console.error('Raw value:', data.value);
               }
-            }
+            },
           },
-
-          // Callback when error occurs
-          onError: (error) => {
-            console.error('❌ Subscription error:', error);
+        ),
+        subscribeChannel<ChannelEventEnvelope>({
+          channelUrl: walletUtils.getChannelUrl(),
+          spec: {
+            topics: ['movement_intent'],
+            filters: {
+              dapp_key: CHANNEL_DAPP_KEY,
+            },
+            semantics: 'Ephemeral',
           },
+          handlers: {
+            onOpen: () => onOpen('movement_intent'),
+            onError,
+            onClose,
+            onMessage: event => {
+              const payload = (event.payload ?? {}) as Partial<MovementIntentPayload>;
+              const playerAddress =
+                typeof payload.player === 'string'
+                  ? payload.player
+                  : typeof event.metadata?.player === 'string'
+                    ? event.metadata.player
+                    : '';
 
-          // Callback when connection closed
-          onClose: () => {
-            console.log('🔌 Subscription connection closed');
-          }
-        }
-      );
+              if (!playerAddress) {
+                return;
+              }
 
-      // Store the unsubscribe function
-      this.subscription = unsubscribe;
-      console.log('========= subscribeToEvents - channel subscription started successfully');
+              const accountLabel = `${playerAddress.slice(0, 6)}...${playerAddress.slice(-4)}`;
+              this.addTransactionFeedEntry(event.topic, accountLabel, 'intent');
+
+              void this.#handleOtherPlayerMovementIntent({
+                player: playerAddress,
+                x: Number(payload.x),
+                y: Number(payload.y),
+                direction: this.#normalizeDirection(payload.direction),
+              });
+            },
+          },
+        }),
+      ];
+
+      if (ENABLE_ITEM_DROPPED_SUBSCRIPTION) {
+        subscriptions.push(
+          this.dubhe.subscribeChannelTable(
+            { table: 'item_dropped' },
+            {
+              onOpen: () => onOpen('item_dropped'),
+              onError,
+              onClose,
+              onMessage: data => {
+                const accountLabel = data.account
+                  ? `${data.account.slice(0, 6)}...${data.account.slice(-4)}`
+                  : 'unknown';
+                this.addTransactionFeedEntry(data.table, accountLabel, 'subscription');
+
+                try {
+                  const playerData = Uint8Array.from(data.value[0]);
+                  const itemTypeData = Uint8Array.from(data.value[1]);
+
+                  const Address = bcs.bytes(32).transform({
+                    input: (val: string) => fromHex(val),
+                    output: val => toHex(val),
+                  });
+
+                  const player = Address.parse(playerData);
+                  const ItemTypeBcs = bcs.enum('ItemType', {
+                    Ball: null,
+                    Currency: null,
+                    Food: null,
+                    Material: null,
+                    Medicine: null,
+                    Scroll: null,
+                    SkillBook: null,
+                    TreasureChest: null,
+                  });
+
+                  const itemType = ItemTypeBcs.parse(itemTypeData);
+
+                  this.#handleItemDroppedEvent({
+                    player,
+                    item_type: itemType.$kind,
+                  });
+                } catch (error) {
+                  console.error('Failed to parse item_dropped data:', error);
+                  console.error('Table:', data.table);
+                  console.error('Raw value:', data.value);
+                }
+              },
+            },
+          ),
+        );
+      }
+
+      const unsubscribes = await Promise.all(subscriptions);
+
+      this.subscription = () => {
+        unsubscribes.forEach(unsubscribe => unsubscribe());
+      };
+      this.#debugLog('channel subscription started successfully');
     } catch (error) {
       console.error('Failed to subscribe to channel events:', error);
     }
@@ -577,12 +832,15 @@ export class WorldScene extends BaseScene {
    */
   registerNewPlayer = async (dubhe: Dubhe) => {
     try {
+      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+      const currentPlayerContractKey = walletUtils.getCurrentAccountContractKey();
+      const spawnPoint = getRegisterSpawnPoint(currentPlayerContractKey);
       const registerTx = new Transaction();
       const params = [
         registerTx.object(this._dubheSchemaId),
-        registerTx.pure.string(walletUtils.getCurrentAccount().address),
-        registerTx.pure.u64(1),
-        registerTx.pure.u64(1),
+        registerTx.pure.string(currentPlayerContractKey),
+        registerTx.pure.u64(spawnPoint.x),
+        registerTx.pure.u64(spawnPoint.y),
       ];
       registerTx.setGasBudget(100000000);
       await dubhe.tx.map_system.force_register({
@@ -590,11 +848,24 @@ export class WorldScene extends BaseScene {
         params,
         isRaw: true,
       });
-      await walletUtils.signAndExecuteTransaction({
+      this.addTransactionFeedEntry(
+        'register_intent',
+        `${currentPlayerAddress} -> ${currentPlayerContractKey} @ ${spawnPoint.x},${spawnPoint.y}`,
+        'system',
+      );
+      return await walletUtils.signAndExecuteTransaction({
         tx: registerTx,
-        onSuccess: async result => {},
+        channelSender: walletUtils.getRegisterSenderAddress(),
+        onSuccess: async result => {
+          this.addTransactionFeedEntry('register_submit', result.digest ?? 'ok', 'submit_ack');
+        },
         onError: error => {
           console.error('Failed to register player:', error);
+          this.addTransactionFeedEntry(
+            'register_error',
+            error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            'system',
+          );
         },
       });
     } catch (error) {
@@ -772,7 +1043,7 @@ export class WorldScene extends BaseScene {
       return;
     }
 
-    console.log(`[${WorldScene.name}:handlePlayerMovementInEncounterZone] player is in an encounter zone`);
+    this.#debugLog('player is in an encounter zone');
 
     // 检查是否已经锁定输入或者已经进入战斗状态
     if (this._controls.isInputLocked || this.#wildMonsterEncountered) {
@@ -791,9 +1062,11 @@ export class WorldScene extends BaseScene {
   }
 
   #isPlayerInputLocked(): boolean {
+    const isDialogVisible = this.#dialogUi ? this.#dialogUi.isVisible : false;
+
     return (
       this._controls.isInputLocked ||
-      this.#dialogUi.isVisible ||
+      isDialogVisible ||
       this.#isProcessingNpcEvent ||
       this.#currentCutSceneId !== undefined
     );
@@ -866,79 +1139,245 @@ export class WorldScene extends BaseScene {
     // dataManager.store.set(DATA_MANAGER_STORE_KEYS.MONSTERS_IN_PARTY, monsters);
   }
 
+  #trackOtherPlayerActivity(playerAddress: string, observedAtMs = Date.now()) {
+    this.#otherPlayerLastSeenMs.set(playerAddress, observedAtMs);
+  }
+
+  #removeOtherPlayer(playerAddress: string, reason: 'ttl_expired' | 'cap_exceeded' | 'invalid_entry') {
+    const existingPlayer = this.#otherPlayers.get(playerAddress);
+    if (existingPlayer) {
+      existingPlayer.destroy();
+      this.#otherPlayers.delete(playerAddress);
+    }
+    this.#otherPlayerLastSeenMs.delete(playerAddress);
+    this.#debugLog(`Removed remote player (${reason}): ${playerAddress}`);
+  }
+
+  #clearOtherPlayers(reason: 'ttl_expired' | 'cap_exceeded' | 'invalid_entry') {
+    for (const playerAddress of this.#otherPlayers.keys()) {
+      this.#removeOtherPlayer(playerAddress, reason);
+    }
+  }
+
+  #pruneRemotePlayers(nowMs: number) {
+    if (!this.#otherPlayers || this.#otherPlayers.size === 0) {
+      return;
+    }
+
+    if (MAX_REMOTE_PLAYERS === 0) {
+      this.#clearOtherPlayers('cap_exceeded');
+      return;
+    }
+
+    for (const [address, lastSeenMs] of this.#otherPlayerLastSeenMs.entries()) {
+      if (!this.#otherPlayers.has(address)) {
+        this.#otherPlayerLastSeenMs.delete(address);
+        continue;
+      }
+
+      if (nowMs - lastSeenMs > REMOTE_PLAYER_TTL_MS) {
+        this.#removeOtherPlayer(address, 'ttl_expired');
+      }
+    }
+
+    if (this.#otherPlayers.size <= MAX_REMOTE_PLAYERS) {
+      return;
+    }
+
+    const playerSprite = this.#player?.sprite;
+    const rankedPlayers = Array.from(this.#otherPlayers.entries()).map(([address, otherPlayer]) => {
+      const lastSeenMs = this.#otherPlayerLastSeenMs.get(address) ?? 0;
+      const distanceSquared = playerSprite
+        ? Phaser.Math.Distance.Squared(playerSprite.x, playerSprite.y, otherPlayer.sprite.x, otherPlayer.sprite.y)
+        : Number.POSITIVE_INFINITY;
+
+      return {
+        address,
+        lastSeenMs,
+        distanceSquared,
+      };
+    });
+
+    rankedPlayers.sort((a, b) => {
+      if (a.distanceSquared !== b.distanceSquared) {
+        return a.distanceSquared - b.distanceSquared;
+      }
+      return b.lastSeenMs - a.lastSeenMs;
+    });
+
+    const keepAddresses = new Set(rankedPlayers.slice(0, MAX_REMOTE_PLAYERS).map(item => item.address));
+    for (const rankedPlayer of rankedPlayers) {
+      if (!keepAddresses.has(rankedPlayer.address)) {
+        this.#removeOtherPlayer(rankedPlayer.address, 'cap_exceeded');
+      }
+    }
+  }
+
+  #updateRemotePlayerLabelVisibility(nowMs: number) {
+    if (nowMs - this.#lastRemoteLabelUpdateAtMs < REMOTE_LABEL_VISIBILITY_UPDATE_INTERVAL_MS) {
+      return;
+    }
+    this.#lastRemoteLabelUpdateAtMs = nowMs;
+
+    if (!this.#player) {
+      return;
+    }
+
+    const playerSprite = this.#player.sprite;
+    this.#player.setAddressLabelVisible(true);
+
+    for (const otherPlayer of this.#otherPlayers.values()) {
+      const isWithinLabelRange =
+        Phaser.Math.Distance.Squared(playerSprite.x, playerSprite.y, otherPlayer.sprite.x, otherPlayer.sprite.y) <=
+        REMOTE_LABEL_DISTANCE_PX_SQUARED;
+      otherPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE || isWithinLabelRange);
+    }
+  }
+
   async #loadOtherPlayers(collisionLayer: Phaser.Tilemaps.TilemapLayer) {
     try {
+      if (MAX_REMOTE_PLAYERS === 0) {
+        this.#clearOtherPlayers('cap_exceeded');
+        this.#debugLog('Remote player rendering is disabled by NEXT_PUBLIC_MAX_REMOTE_PLAYERS=0');
+        return;
+      }
+
       const currentPlayerAddress = walletUtils.getCurrentAccount().address;
-      console.log('========= Current player address:', currentPlayerAddress);
+      const currentPlayerAccount = normalizePlayerAccount(currentPlayerAddress);
+      this.#debugLog('Current player address:', currentPlayerAddress);
 
       const allPlayersPositions = await dataManager.getAllPlayersPositions();
-      console.log('========= Total players found:', allPlayersPositions.length);
-      console.log('========= All players positions:', JSON.stringify(allPlayersPositions, null, 2));
+      this.#debugLog('Total players found:', allPlayersPositions.length);
 
-      // Create player sprites for all other players (excluding current player)
+      const currentPlayerPosition = this.#player?.sprite
+        ? { x: this.#player.sprite.x, y: this.#player.sprite.y }
+        : dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION);
+      const sortedRemotePlayers = allPlayersPositions
+        .filter(playerPos => normalizePlayerAccount(playerPos.player) !== currentPlayerAccount)
+        .sort((a, b) => {
+          const aX = Number(a?.x);
+          const aY = Number(a?.y);
+          const bX = Number(b?.x);
+          const bY = Number(b?.y);
+
+          const aDistance = Number.isFinite(aX) && Number.isFinite(aY)
+            ? Phaser.Math.Distance.Squared(currentPlayerPosition.x, currentPlayerPosition.y, aX, aY)
+            : Number.POSITIVE_INFINITY;
+          const bDistance = Number.isFinite(bX) && Number.isFinite(bY)
+            ? Phaser.Math.Distance.Squared(currentPlayerPosition.x, currentPlayerPosition.y, bX, bY)
+            : Number.POSITIVE_INFINITY;
+          return aDistance - bDistance;
+        })
+        .slice(0, MAX_REMOTE_PLAYERS);
+
+      // Create player sprites for selected nearby players
       let otherPlayersCount = 0;
-      for (const playerPos of allPlayersPositions) {
-        console.log('========= Processing player:', playerPos.player);
-
-        // Skip current player
-        if (playerPos.player === currentPlayerAddress) {
-          console.log('========= Skipping current player:', playerPos.player);
+      for (const playerPos of sortedRemotePlayers) {
+        const canonicalPlayerAddress = toCanonicalPlayerAddress(playerPos.player);
+        const x = Number(playerPos?.x);
+        const y = Number(playerPos?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          this.#debugLog(`Skipping invalid player position for: ${canonicalPlayerAddress}`);
           continue;
         }
-
-        console.log(
-          '========= Creating sprite for other player:',
-          playerPos.player,
-          'at position:',
-          playerPos.x,
-          playerPos.y,
-        );
 
         // Create a Player instance for other players
         const otherPlayer = new Player({
           scene: this,
-          position: { x: playerPos.x, y: playerPos.y },
+          position: { x, y },
           direction: DIRECTION.DOWN,
           collisionLayer: collisionLayer,
           otherCharactersToCheckForCollisionsWith: this.#npcs,
           objectsToCheckForCollisionsWith: this.#items,
           entranceLayer: this.#entranceLayer,
           enterEntranceCallback: async () => {}, // Other players don't trigger entrance events
-          playerAddress: playerPos.player,
+          playerAddress: canonicalPlayerAddress,
           isCurrentPlayer: false, // Mark as other player for colored backgrounds
         });
 
         // Set depth to ensure other players are visible
         otherPlayer.sprite.setDepth(1);
+        otherPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE);
 
-        this.#otherPlayers.set(playerPos.player, otherPlayer);
+        this.#otherPlayers.set(canonicalPlayerAddress, otherPlayer);
+        this.#trackOtherPlayerActivity(canonicalPlayerAddress);
         otherPlayersCount++;
-        console.log(`========= Successfully created player sprite #${otherPlayersCount} for: ${playerPos.player}`);
-        console.log(`========= Sprite visible: ${otherPlayer.sprite.visible}, active: ${otherPlayer.sprite.active}`);
+        this.#debugLog(`Created player sprite #${otherPlayersCount} for: ${canonicalPlayerAddress}`);
       }
 
-      console.log(`========= Finished loading ${otherPlayersCount} other players`);
-      console.log(`========= Total players in map: ${this.#otherPlayers.size}`);
+      this.#pruneRemotePlayers(Date.now());
+      this.#updateRemotePlayerLabelVisibility(Date.now());
+      this.#debugLog(`Finished loading ${otherPlayersCount} other players`);
     } catch (error) {
-      console.error('========= Failed to load other players:', error);
-      console.error('========= Error stack:', error.stack);
+      console.error('Failed to load other players:', error);
     }
   }
 
-  async #handleOtherPlayerPositionUpdate(positionData: any) {
-    try {
-      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
-      const playerAddress = positionData.player;
+  #normalizeDirection(direction: unknown): Direction {
+    if (
+      direction === DIRECTION.UP ||
+      direction === DIRECTION.DOWN ||
+      direction === DIRECTION.LEFT ||
+      direction === DIRECTION.RIGHT
+    ) {
+      return direction;
+    }
 
-      // Skip if this is the current player
-      if (playerAddress === currentPlayerAddress) {
+    return DIRECTION.NONE;
+  }
+
+  async #handleOtherPlayerMovementIntent(intentData: MovementIntentPayload) {
+    if (MAX_REMOTE_PLAYERS === 0) {
+      return;
+    }
+
+    if (!Number.isFinite(intentData.x) || !Number.isFinite(intentData.y)) {
+      return;
+    }
+
+    await this.#handleOtherPlayerPositionUpdate(intentData, {
+      authoritative: false,
+      durationMs: REMOTE_PLAYER_INTENT_MOVE_DURATION_MS,
+    });
+  }
+
+  async #handleOtherPlayerPositionUpdate(
+    positionData: any,
+    options: {
+      authoritative?: boolean;
+      durationMs?: number;
+    } = {},
+  ) {
+    try {
+      if (MAX_REMOTE_PLAYERS === 0) {
         return;
       }
 
-      const x = Number(positionData.x) * TILE_SIZE;
-      const y = Number(positionData.y) * TILE_SIZE;
+      const authoritative = options.authoritative ?? true;
+      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+      const currentPlayerAccount = normalizePlayerAccount(currentPlayerAddress);
+      const rawPlayerAddress = typeof positionData?.player === 'string' ? positionData.player : '';
+      if (!rawPlayerAddress) {
+        return;
+      }
+      const playerAddress = toCanonicalPlayerAddress(rawPlayerAddress);
+      const nowMs = Date.now();
 
-      console.log(`Updating player ${playerAddress} position to (${x}, ${y})`);
+      // Skip if this is the current player
+      if (normalizePlayerAccount(playerAddress) === currentPlayerAccount) {
+        return;
+      }
+
+      const tileX = Number(positionData?.x);
+      const tileY = Number(positionData?.y);
+      if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) {
+        return;
+      }
+
+      const x = tileX * TILE_SIZE;
+      const y = tileY * TILE_SIZE;
+      this.#otherPlayers ||= new Map();
+      this.#trackOtherPlayerActivity(playerAddress, nowMs);
 
       // Check if we already have this player
       const existingPlayer = this.#otherPlayers.get(playerAddress);
@@ -946,10 +1385,21 @@ export class WorldScene extends BaseScene {
       if (existingPlayer) {
         // Update existing player's position with animation
         const sprite = existingPlayer.sprite;
+        const isAlreadyAtTarget = existingPlayer._targetPosition.x === x && existingPlayer._targetPosition.y === y;
+        const isAlreadyAtPosition = sprite.x === x && sprite.y === y;
+
+        if (isAlreadyAtTarget || isAlreadyAtPosition) {
+          existingPlayer._targetPosition = { x, y };
+          existingPlayer._previousTargetPosition = { x, y };
+
+          if (authoritative && isAlreadyAtPosition) {
+            existingPlayer._updateAddressLabelPosition();
+          }
+          return;
+        }
 
         // Stop any existing tween to prevent animation stacking
         if (existingPlayer._currentTween && existingPlayer._currentTween.isPlaying()) {
-          console.log(`Stopping previous tween for player ${playerAddress}`);
           existingPlayer._currentTween.stop();
           existingPlayer._currentTween = undefined;
         }
@@ -957,15 +1407,15 @@ export class WorldScene extends BaseScene {
         // Calculate movement direction based on position change
         const dx = x - sprite.x;
         const dy = y - sprite.y;
-        let direction: Direction = DIRECTION.NONE;
+        let direction: Direction = this.#normalizeDirection(positionData.direction);
 
-        // Determine direction based on the larger delta
-        if (Math.abs(dx) > Math.abs(dy)) {
-          // Horizontal movement is dominant
-          direction = dx > 0 ? DIRECTION.RIGHT : DIRECTION.LEFT;
-        } else if (Math.abs(dy) > 0) {
-          // Vertical movement is dominant
-          direction = dy > 0 ? DIRECTION.DOWN : DIRECTION.UP;
+        if (direction === DIRECTION.NONE) {
+          // Determine direction based on the larger delta
+          if (Math.abs(dx) > Math.abs(dy)) {
+            direction = dx > 0 ? DIRECTION.RIGHT : DIRECTION.LEFT;
+          } else if (Math.abs(dy) > 0) {
+            direction = dy > 0 ? DIRECTION.DOWN : DIRECTION.UP;
+          }
         }
 
         // Update player direction
@@ -985,17 +1435,12 @@ export class WorldScene extends BaseScene {
 
         // Calculate distance to determine appropriate animation duration
         const distance = Phaser.Math.Distance.Between(sprite.x, sprite.y, x, y);
-
-        // Dynamic duration: 150ms per tile (64px), min 200ms, max 800ms
-        // This ensures smooth animation regardless of distance
-        const duration = Phaser.Math.Clamp(distance * 2.34, 200, 800);
-
-        console.log(
-          `Moving player ${playerAddress} - Distance: ${distance.toFixed(2)}px, Duration: ${duration}ms, Direction: ${direction}`,
-        );
+        const duration = options.durationMs ?? Phaser.Math.Clamp(distance * 1.4, 90, 240);
 
         // Mark player as moving
         existingPlayer._isMoving = true;
+        existingPlayer._previousTargetPosition = { ...existingPlayer._targetPosition };
+        existingPlayer._targetPosition = { x, y };
 
         // Create new tween and store reference
         existingPlayer._currentTween = this.add.tween({
@@ -1011,6 +1456,8 @@ export class WorldScene extends BaseScene {
             existingPlayer._updateAddressLabelPosition();
             // Stop walking animation and show idle frame
             existingPlayer._isMoving = false;
+            existingPlayer._previousTargetPosition = { x, y };
+            existingPlayer._targetPosition = { x, y };
             try {
               if (sprite.anims && sprite.anims.currentAnim) {
                 sprite.anims.stop();
@@ -1025,7 +1472,10 @@ export class WorldScene extends BaseScene {
         });
       } else {
         // Create new player if they don't exist
-        const collisionLayer = this.#player._collisionLayer;
+        const collisionLayer = this.#player?._collisionLayer ?? this.#collisionLayer;
+        if (!collisionLayer) {
+          return;
+        }
         const newPlayer = new Player({
           scene: this,
           position: { x, y },
@@ -1041,15 +1491,54 @@ export class WorldScene extends BaseScene {
 
         // Set depth to ensure new player is visible
         newPlayer.sprite.setDepth(1);
+        newPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE);
 
         this.#otherPlayers.set(playerAddress, newPlayer);
-        console.log(`========= Created new player sprite for: ${playerAddress} at position (${x}, ${y})`);
-        console.log(`========= New sprite visible: ${newPlayer.sprite.visible}, active: ${newPlayer.sprite.active}`);
+        this.#debugLog(`Created new player sprite for: ${playerAddress} at position (${x}, ${y})`);
+        this.#pruneRemotePlayers(nowMs);
       }
     } catch (error) {
-      console.error('========= Failed to update other player position:', error);
-      console.error('========= Error stack:', error.stack);
+      console.error('Failed to update other player position:', error);
     }
+  }
+
+  #syncCurrentPlayerPosition(x: number, y: number) {
+    if (!this.#player) {
+      return;
+    }
+
+    const worldX = x * TILE_SIZE;
+    const worldY = y * TILE_SIZE;
+
+    if (this.#player.shouldIgnoreAuthoritativePosition({ x: worldX, y: worldY })) {
+      this.#debugLog('Ignoring stale current-player sync', {
+        incoming: { x: worldX, y: worldY },
+        target: this.#player._targetPosition,
+        previous: this.#player._previousTargetPosition,
+        isMoving: this.#player.isMoving,
+        pending: this.#player.isChainMovementPending,
+      });
+      return;
+    }
+
+    dataManager.store.set(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION, {
+      x: worldX,
+      y: worldY,
+    });
+
+    if (this.#player.isMoving) {
+      return;
+    }
+
+    if (this.#player.sprite.x === worldX && this.#player.sprite.y === worldY) {
+      return;
+    }
+
+    this.#player.sprite.x = worldX;
+    this.#player.sprite.y = worldY;
+    this.#player._targetPosition = { x: worldX, y: worldY };
+    this.#player._previousTargetPosition = { x: worldX, y: worldY };
+    this.#player._updateAddressLabelPosition();
   }
 
   /**
@@ -1058,7 +1547,7 @@ export class WorldScene extends BaseScene {
    */
   async #handleItemDroppedEvent(itemDropData: any) {
     try {
-      console.log('========= Item dropped event received:', itemDropData);
+      this.#debugLog('Item dropped event received:', itemDropData);
 
       // Extract item information from the data
       const itemType = itemDropData.item_type || itemDropData.itemType;
@@ -1088,7 +1577,7 @@ export class WorldScene extends BaseScene {
         this.#chatUi = this.scene.get(SCENE_KEYS.CHAT_SCENE) as ChatScene;
 
         if (!this.scene.isActive(SCENE_KEYS.CHAT_SCENE)) {
-          console.log('Starting chat scene for item drop notification...');
+          this.#debugLog('Starting chat scene for item drop notification...');
           this.scene.launch(SCENE_KEYS.CHAT_SCENE);
           // Wait for scene initialization
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -1098,13 +1587,12 @@ export class WorldScene extends BaseScene {
       // Send message to chat with ITEM type for green color highlighting
       if (this.#chatUi && typeof this.#chatUi.addMessage === 'function') {
         this.#chatUi.addMessage(message, MessageType.ITEM);
-        console.log(`========= Item drop message sent: ${message}`);
+        this.#debugLog(`Item drop message sent: ${message}`);
       } else {
         console.warn('Unable to send item drop message: ChatUI not properly initialized');
       }
     } catch (error) {
-      console.error('========= Failed to handle item dropped event:', error);
-      console.error('========= Error stack:', error.stack);
+      console.error('Failed to handle item dropped event:', error);
     }
   }
 
@@ -1183,7 +1671,7 @@ export class WorldScene extends BaseScene {
       await walletUtils.signAndExecuteTransaction({
         tx,
         onSuccess: async (result: any) => {
-          console.log(`Teleport transaction successful:`, result);
+          this.#debugLog('Teleport transaction successful:', result);
 
           // 交易完成后再进行场景切换
           await new Promise<void>(resolve => {
@@ -1208,7 +1696,7 @@ export class WorldScene extends BaseScene {
                   newY += TILE_SIZE;
                 }
 
-                console.log(`[${WorldScene.name}:handleEntranceEnteredCallback] setting player position to`, {
+                this.#debugLog('setting player position to', {
                   x: newX,
                   y: newY,
                 });
@@ -1602,7 +2090,7 @@ export class WorldScene extends BaseScene {
   async #addMonsterFromNpc(gameEvent: GameEventGiveMonster) {
     // TODO: add check to see if party is full and do something with 7th monster that is being added
     if (dataManager.store.get(DATA_MANAGER_STORE_KEYS.MONSTERS_IN_PARTY).length === 0) {
-      console.log('Adding monster to party');
+      this.#debugLog('Adding monster to party');
       const tx = new Transaction();
       await this.dubhe.tx.numeron_monster_system.claim_monster({
         tx,
@@ -1612,14 +2100,14 @@ export class WorldScene extends BaseScene {
       await walletUtils.signAndExecuteTransaction({
         tx,
         onSuccess: async (result: any) => {
-          console.log(`Transaction successful:`, result);
+          this.#debugLog('Transaction successful:', result);
         },
         onError: (error: any) => {
           console.error(`Transaction failed:`, error);
         },
       });
     } else {
-      console.log('You already have a monster in your party');
+      this.#debugLog('You already have a monster in your party');
     }
 
     // const monstersInParty: Monster[] = dataManager.store.get(DATA_MANAGER_STORE_KEYS.MONSTERS_IN_PARTY);
@@ -1704,7 +2192,7 @@ export class WorldScene extends BaseScene {
       return;
     }
 
-    console.log(`[${WorldScene.name}:handlePlayerMovementStarted] player is moving to an encounter zone`);
+    this.#debugLog('player is moving to an encounter zone');
     // check the tile type for the encounter the player is moving through and play related effects
     this.#handleEncounterTileTypeEffects(this.#encounterZonePlayerIsEntering, encounterTile, this.#player.direction);
   }
@@ -1749,6 +2237,13 @@ export class WorldScene extends BaseScene {
   }
 
   #hideSpecialEncounterTiles() {
+    if (
+      !this.#specialEncounterTileImageGameObjectGroup ||
+      typeof this.#specialEncounterTileImageGameObjectGroup.getChildren !== 'function'
+    ) {
+      return;
+    }
+
     this.#specialEncounterTileImageGameObjectGroup.getChildren().some((child: Phaser.GameObjects.Image) => {
       if (!child.active) {
         return false;
@@ -1772,7 +2267,7 @@ export class WorldScene extends BaseScene {
         this.#chatUi = this.scene.get(SCENE_KEYS.CHAT_SCENE) as ChatScene;
 
         if (!this.scene.isActive(SCENE_KEYS.CHAT_SCENE)) {
-          console.log('Starting chat scene...');
+          this.#debugLog('Starting chat scene...');
           this.scene.launch(SCENE_KEYS.CHAT_SCENE);
 
           // 等待场景初始化完成
@@ -1800,6 +2295,14 @@ export class WorldScene extends BaseScene {
    * Create transaction feed display in top-right corner
    */
   #createTransactionFeed() {
+    this.#transactionFeedTexts = [];
+    this.#transactionFeedDebugEntries = [];
+    this.#nextTransactionFeedSequence = 1;
+
+    if (!ENABLE_TRANSACTION_FEED_UI) {
+      return;
+    }
+
     // Create container for the transaction feed
     this.#transactionFeedContainer = this.add.container(0, 0);
     this.#transactionFeedContainer.setScrollFactor(0);
@@ -1829,20 +2332,176 @@ export class WorldScene extends BaseScene {
 
     this.#transactionFeedContainer.add([background, title]);
     this.#transactionFeedContainer.setPosition(x, y);
+  }
 
-    // Initialize empty text array
-    this.#transactionFeedTexts = [];
+  addTransactionFeedEntry(summary: string, detail?: string, source: TransactionFeedSource = 'system') {
+    this.#addTransactionToFeed(summary, detail, source);
+  }
+
+  debugState() {
+    const player = this.#player
+      ? {
+          x: this.#player.sprite.x,
+          y: this.#player.sprite.y,
+          moving: this.#player.isMoving,
+          chainMovementPending: this.#player.isChainMovementPending,
+          direction: this.#player.direction,
+        }
+      : null;
+
+    return {
+      scene: this.scene.key,
+      area: this.#sceneData?.area ?? null,
+      currentPlayer: walletUtils.getCurrentAccount().address,
+      player,
+      otherPlayers: this.#otherPlayers?.size ?? 0,
+      subscriptionActive: typeof this.subscription === 'function',
+      feedEntries: this.#transactionFeedDebugEntries?.map(entry => entry.displayText) ?? [],
+      feedDebugEntries:
+        this.#transactionFeedDebugEntries?.map(entry => ({
+          ...entry,
+        })) ?? [],
+    };
+  }
+
+  async debugMove(direction: Direction) {
+    if (!this.#player) {
+      throw new Error('World player is not initialized yet');
+    }
+
+    await this.#player.moveCharacter(direction);
+    return this.debugState();
+  }
+
+  async debugRegisterCurrentPlayer(timeoutMs = REGISTER_POSITION_WAIT_TIMEOUT_MS) {
+    const rawAccountKey = walletUtils.getCurrentAccount().address;
+    const contractAccountKey = walletUtils.getCurrentAccountContractKey();
+    const queryPosition = async (account: string) => {
+      try {
+        return await walletUtils.dubhe.queryChannelTable({
+          account,
+          table: 'position',
+          key: [],
+        });
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
+
+    const submitResult = await this.registerNewPlayer(this.dubhe);
+    const rawAccountPosition = await queryPosition(rawAccountKey);
+    const contractAccountPosition = await queryPosition(contractAccountKey);
+    const waitedPosition = await this.#waitForRegisteredPlayerPosition(contractAccountKey, timeoutMs);
+
+    return {
+      rawAccountKey,
+      contractAccountKey,
+      submitResult,
+      rawAccountPosition,
+      contractAccountPosition,
+      waitedPosition,
+      state: this.debugState(),
+    };
+  }
+
+  async debugPrepareForBenchmark(timeoutMs = 5000) {
+    if (!this.#player) {
+      throw new Error('World player is not initialized yet');
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    const finalizeBenchmarkState = () => {
+      this._controls.lockInput = false;
+      this.#isProcessingNpcEvent = false;
+      this.#isProcessingCutSceneEvent = false;
+      this.#npcPlayerIsInteractingWith = undefined;
+      this.#currentCutSceneId = undefined;
+      this.#dialogUi?.hideDialogModal();
+
+      [
+        SCENE_KEYS.TITLE_SCENE,
+        SCENE_KEYS.CUTSCENE_SCENE,
+        SCENE_KEYS.DIALOG_SCENE,
+        SCENE_KEYS.CHAT_SCENE,
+      ].forEach(sceneKey => {
+        if (this.scene.isActive(sceneKey) || this.scene.isSleeping(sceneKey)) {
+          this.scene.stop(sceneKey);
+        }
+      });
+
+      return this.debugState();
+    };
+
+    while (Date.now() < deadline) {
+      if (!this.#dialogUi) {
+        await sleep(100, this);
+        continue;
+      }
+
+      if (!this.#isPlayerInputLocked()) {
+        return finalizeBenchmarkState();
+      }
+
+      await this.#handlePlayerInteraction();
+      await sleep(100, this);
+    }
+
+    return finalizeBenchmarkState();
+  }
+
+  debugGetAvailableMoveDirections(
+    preferredDirections: Direction[] = [DIRECTION.RIGHT, DIRECTION.DOWN, DIRECTION.LEFT, DIRECTION.UP],
+  ) {
+    if (!this.#player) {
+      return [];
+    }
+
+    const playerPosition = {
+      x: this.#player.sprite.x,
+      y: this.#player.sprite.y,
+    };
+
+    return preferredDirections.filter(direction => {
+      if (direction === DIRECTION.NONE) {
+        return false;
+      }
+
+      const targetPosition = getTargetPositionFromGameObjectPositionAndDirection(playerPosition, direction);
+
+      if (this.#collisionLayer) {
+        const collisionTile = this.#collisionLayer.getTileAtWorldXY(targetPosition.x, targetPosition.y, true);
+        if (collisionTile && collisionTile.index !== -1) {
+          return false;
+        }
+      }
+
+      for (const otherPlayer of this.#otherPlayers.values()) {
+        if (otherPlayer.sprite.x === targetPosition.x && otherPlayer.sprite.y === targetPosition.y) {
+          return false;
+        }
+      }
+
+      for (const item of this.#items) {
+        if (item.position.x === targetPosition.x && item.position.y === targetPosition.y) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   }
 
   /**
-   * Add a transaction to the feed display
-   * @param digest - Transaction digest to display
-   * @param tableId - Optional table ID to display
+   * Add a transaction or table update to the feed display
+   * @param summary - Main label to display
+   * @param detail - Optional secondary detail line
    */
-  #addTransactionToFeed(digest: string, tableId?: string) {
-    if (!this.#transactionFeedContainer) {
-      return;
-    }
+  #addTransactionToFeed(summary: string, detail?: string, source: TransactionFeedSource = 'system') {
+    this.#transactionFeedTexts ||= [];
+    this.#transactionFeedDebugEntries ||= [];
+    this.#nextTransactionFeedSequence ||= 1;
 
     const feedWidth = 400;
     const padding = 5;
@@ -1855,6 +2514,7 @@ export class WorldScene extends BaseScene {
       if (oldestText) {
         oldestText.destroy();
       }
+      this.#transactionFeedDebugEntries.shift();
     }
 
     // Move existing texts down
@@ -1874,13 +2534,33 @@ export class WorldScene extends BaseScene {
       second: '2-digit',
     });
 
-    // Truncate digest for display
-    const shortDigest = digest.substring(0, 10) + '...' + digest.substring(digest.length - 6);
+    const formatValue = (value: string) => {
+      if (!value) {
+        return value;
+      }
+      if (value.length <= 24) {
+        return value;
+      }
+      return `${value.substring(0, 10)}...${value.substring(value.length - 6)}`;
+    };
 
-    // Format display text
-    let displayText = `[${timeStr}] ${shortDigest}`;
-    if (tableId) {
-      displayText = `[${timeStr}] ${tableId}\n  ${shortDigest}`;
+    let displayText = `[${timeStr}] ${formatValue(summary)}`;
+    if (detail) {
+      displayText = `[${timeStr}] ${formatValue(summary)}\n  ${formatValue(detail)}`;
+    }
+
+    this.#transactionFeedDebugEntries.push({
+      sequence: this.#nextTransactionFeedSequence,
+      summary,
+      detail,
+      source,
+      observedAtMs: Date.now(),
+      displayText,
+    });
+    this.#nextTransactionFeedSequence += 1;
+
+    if (!ENABLE_TRANSACTION_FEED_UI || !this.#transactionFeedContainer) {
+      return;
     }
 
     // Create new text for this transaction

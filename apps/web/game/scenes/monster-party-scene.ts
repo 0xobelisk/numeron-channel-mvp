@@ -458,7 +458,7 @@ export class MonsterPartyScene extends BaseScene {
       tx,
       onSuccess: async (result: any) => {
         console.log(`Transaction successful:`, result);
-        await this._dubhe.waitForIndexerTransaction(result.digest);
+        await this._dubhe.waitForTransaction(result.digest);
       },
       onError: (error: any) => {
         console.error(`Transaction failed:`, error);
@@ -542,7 +542,7 @@ export class MonsterPartyScene extends BaseScene {
       tx,
       onSuccess: async (result: any) => {
         console.log(`Transaction successful:`, result);
-        await this._dubhe.waitForIndexerTransaction(result.digest);
+        await this._dubhe.waitForTransaction(result.digest);
         await dataManager.updateMonsters();
       },
       onError: (error: any) => {
@@ -671,7 +671,7 @@ export class MonsterPartyScene extends BaseScene {
             tx,
             onSuccess: async (result: any) => {
               console.log(`Transaction successful:`, result);
-              await this._dubhe.waitForIndexerTransaction(result.digest);
+              await this._dubhe.waitForTransaction(result.digest);
 
               this.#removeMonster();
               this._controls.lockInput = false;
@@ -762,7 +762,7 @@ export class MonsterPartyScene extends BaseScene {
         this.#selectedPartyMonsterIndex = this.#monsterToBeMovedIndex;
         this.#monsterToBeMovedIndex = undefined;
 
-        await this._dubhe.waitForIndexerTransaction(result.digest);
+        await this._dubhe.waitForTransaction(result.digest);
         await dataManager.updateMonsters();
       },
       onError: (error: any) => {

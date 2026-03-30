@@ -24,7 +24,7 @@ import { BattleSceneMenuOptions } from '../common/options';
 import { WorldSceneData } from './world-scene';
 import { MonsterPartySceneData } from './monster-party-scene';
 import { StatChanges } from '../utils/leveling-utils';
-import { IndexerTransactionResult, Transaction } from '@0xobelisk/sui-client';
+import { SuiTransactionBlockResponse, Transaction } from '@0xobelisk/sui-client';
 import { walletUtils } from '../utils/wallet-utils';
 
 const BATTLE_STATES = Object.freeze({
@@ -536,7 +536,7 @@ export class BattleScene extends BaseScene {
                 this.#battleStateMachine.setState(BATTLE_STATES.POST_ATTACK_CHECK);
               });
             });
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
           },
           onError: (error: any) => {
             console.error(`Transaction failed:`, error);
@@ -582,7 +582,7 @@ export class BattleScene extends BaseScene {
           tx,
           onSuccess: async (result: any) => {
             console.log(`Transaction successful:`, result);
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
             fleeSuccess = true;
           },
           onError: (error: any) => {
@@ -769,7 +769,7 @@ export class BattleScene extends BaseScene {
       name: BATTLE_STATES.BALL_ITEM_USED,
       onEnter: async () => {
         const tx = new Transaction();
-        let txResponse: IndexerTransactionResult;
+        let txResponse: SuiTransactionBlockResponse;
         await this._dubhe.tx.numeron_encounter_system.capture({
           tx,
           params: [
@@ -792,12 +792,14 @@ export class BattleScene extends BaseScene {
             })();
 
             const waitTxPromise = (async () => {
-              txResponse = await this._dubhe.waitForIndexerTransaction(result.digest);
+              txResponse = await this._dubhe.waitForTransaction(result.digest);
             })();
 
             await Promise.all([animationsPromise, waitTxPromise]);
 
-            const catchEvent = txResponse.events.find(event => event.name === 'monster_catch_attempt_event');
+            const catchEvent = txResponse.events?.find(event =>
+              event.type.includes('monster_catch_attempt_event')
+            );
 
             if (!catchEvent) {
               console.error('Capture event data not found');
@@ -807,7 +809,7 @@ export class BattleScene extends BaseScene {
             console.log('catchEvent', catchEvent);
 
             // Determine capture result based on event data
-            const catchResult = catchEvent.value.result;
+            const catchResult = (catchEvent.parsedJson as { result: Record<string, unknown> }).result;
             const wasCaptured = Object.keys(catchResult)[0] === 'Caught';
 
             // Determine ball shake count based on result
@@ -916,7 +918,7 @@ export class BattleScene extends BaseScene {
           tx,
           onSuccess: async (result: any) => {
             console.log(`Transaction successful:`, result);
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
             fleeSuccess = true;
           },
           onError: (error: any) => {

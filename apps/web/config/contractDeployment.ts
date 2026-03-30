@@ -1,0 +1,62 @@
+import {
+  DUBHE_SCHEMA_ID as DEFAULT_DUBHE_SCHEMA_ID,
+  NETWORK as DEFAULT_NETWORK,
+  PACKAGE_ID as DEFAULT_PACKAGE_ID,
+} from 'contracts/deployment';
+
+const DEFAULT_PACKAGE_ID_BY_NETWORK = {
+  testnet: '0xe1bda746221723baf28023293f484c6aede2ed20ac53d157af00df6524904908',
+  mainnet: undefined,
+  devnet: undefined,
+  localnet: undefined,
+} as const;
+
+const DEFAULT_DAPP_HUB_ID_BY_NETWORK = {
+  testnet: '0x2f1b8574ad35164a481719c07ff9d098851bb39db292f6310d73707024592f42',
+  mainnet: undefined,
+  devnet: undefined,
+  localnet: undefined,
+} as const;
+
+const DEFAULT_FRAMEWORK_PACKAGE_ID_BY_NETWORK = {
+  testnet: '0x1b84d7aa8fbd502932d9153e29afb2bef1367f4c4b9da063258c384474313063',
+  mainnet: undefined,
+  devnet: undefined,
+  localnet: undefined,
+} as const;
+
+const DEFAULT_PROXY_DAPP_HUB_ID_BY_NETWORK = {
+  testnet: '0x2f1b8574ad35164a481719c07ff9d098851bb39db292f6310d73707024592f42',
+  mainnet: undefined,
+  devnet: undefined,
+  localnet: undefined,
+} as const;
+
+export const NETWORK: typeof DEFAULT_NETWORK =
+  (process.env.NEXT_PUBLIC_DUBHE_NETWORK as typeof DEFAULT_NETWORK | undefined) || DEFAULT_NETWORK;
+
+const ENV_PACKAGE_ID = process.env.NEXT_PUBLIC_DUBHE_PACKAGE_ID;
+const ENV_DAPP_HUB_ID = process.env.NEXT_PUBLIC_DUBHE_SCHEMA_ID;
+
+export const PACKAGE_ID =
+  NETWORK === 'testnet'
+    ? DEFAULT_PACKAGE_ID_BY_NETWORK.testnet
+    : ENV_PACKAGE_ID || DEFAULT_PACKAGE_ID;
+
+export const DUBHE_SCHEMA_ID =
+  NETWORK === 'testnet'
+    ? DEFAULT_DAPP_HUB_ID_BY_NETWORK.testnet
+    : ENV_DAPP_HUB_ID || DEFAULT_DUBHE_SCHEMA_ID;
+
+const ENV_FRAMEWORK_PACKAGE_ID = process.env.NEXT_PUBLIC_DUBHE_FRAMEWORK_PACKAGE_ID;
+const ENV_PROXY_DAPP_HUB_ID = process.env.NEXT_PUBLIC_DUBHE_PROXY_DAPP_HUB_ID;
+
+export const FRAMEWORK_PACKAGE_ID =
+  NETWORK === 'testnet'
+    ? DEFAULT_FRAMEWORK_PACKAGE_ID_BY_NETWORK.testnet
+    : ENV_FRAMEWORK_PACKAGE_ID || DEFAULT_FRAMEWORK_PACKAGE_ID_BY_NETWORK[NETWORK] || undefined;
+
+export const PROXY_DAPP_HUB_ID =
+  NETWORK === 'testnet'
+    ? DEFAULT_PROXY_DAPP_HUB_ID_BY_NETWORK.testnet
+    : ENV_PROXY_DAPP_HUB_ID || DEFAULT_PROXY_DAPP_HUB_ID_BY_NETWORK[NETWORK] || DUBHE_SCHEMA_ID;

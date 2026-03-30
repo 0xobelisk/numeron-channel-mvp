@@ -21,14 +21,16 @@ class NonceManager {
   }
 
   /**
-   * Initialize nonce from the latest nonce on chain
+   * Initialize nonce from the next nonce exposed by channel
    */
   public async initialize(): Promise<void> {
     try {
-      const latestNonce = await walletUtils.dubhe.latestNonce();
+      const latestNonce = await walletUtils.dubhe.latestNonce({
+        account: walletUtils.getCurrentAccount().address,
+      });
       console.log('[NonceManager] Latest nonce from chain:', latestNonce);
       
-      // latestNonce is the last available nonce, can be used directly
+      // latestNonce already returns the next acceptable nonce for this sender.
       this.nonce = Number(latestNonce);
       this.isInitialized = true;
       console.log('[NonceManager] Initialized nonce to:', this.nonce);

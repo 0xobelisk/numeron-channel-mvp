@@ -1,11 +1,18 @@
 import { DIRECTION, Direction } from '../../common/direction';
+import { TILE_SIZE } from '../../config';
 import { getTargetPositionFromGameObjectPositionAndDirection } from '../../utils/grid-utils';
 import { exhaustiveGuard } from '../../utils/guard';
 import { Coordinate } from '../../types/typedef';
 import { Dubhe, SuiTransactionBlockResponse, Transaction, TransactionResult } from '@0xobelisk/sui-client';
 import { walletUtils } from '../../utils/wallet-utils';
-import { DUBHE_SCHEMA_ID } from 'contracts/deployment';
-import { nonceManager } from '../../utils/nonce-manager';
+import { publishChannelEvent } from '@/lib/channel-events';
+import { DUBHE_SCHEMA_ID, PACKAGE_ID } from '@/config/contractDeployment';
+
+const LOCAL_PLAYER_MOVE_DURATION_MS = Number(process.env.NEXT_PUBLIC_FAST_MOVE_DURATION_MS || 48);
+const AUTHORITATIVE_SYNC_GRACE_MS = Number(process.env.NEXT_PUBLIC_POSITION_SYNC_GRACE_MS || 900);
+const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
+  ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
+  : process.env.NODE_ENV !== 'production';
 
 export interface CharacterIdleFrameConfig {
   LEFT: number;
@@ -38,7 +45,6 @@ export class Character {
   _phaserGameObject: Phaser.GameObjects.Sprite;
   _direction: Direction;
   _isMoving: boolean;
-  _isChainMovementPending: boolean;
   _targetPosition: Coordinate;
   _previousTargetPosition: Coordinate;
   _spriteGridMovementFinishedCallback?: () => void;
@@ -55,6 +61,8 @@ export class Character {
   _addressLabelBackground?: Phaser.GameObjects.Graphics;
   _currentTween?: Phaser.Tweens.Tween; // Track current movement tween to prevent animation stacking
   _isCurrentPlayer: boolean;
+  _pendingChainMovements: number;
+  _lastLocalMovementAtMs: number;
 
   constructor(config: CharacterConfig) {
     if (this.constructor === Character) {
@@ -78,13 +86,22 @@ export class Character {
     this._objectsToCheckForCollisionsWith = config.objectsToCheckForCollisionsWith || [];
     this._spriteGridMovementStartedCallback = config.spriteGridMovementStartedCallback;
     this.dubhe = config.dubhe;
-    this._isChainMovementPending = false;
     this._isCurrentPlayer = config.isCurrentPlayer || false;
+    this._pendingChainMovements = 0;
+    this._lastLocalMovementAtMs = 0;
 
     // Create address label if playerAddress is provided
     if (config.playerAddress) {
       this._createAddressLabel(config.playerAddress);
     }
+  }
+
+  _debugLog(...args: unknown[]) {
+    if (!ENABLE_CHANNEL_VERBOSE_LOGS) {
+      return;
+    }
+
+    console.log('[Character]', ...args);
   }
 
   /**
@@ -94,27 +111,20 @@ export class Character {
    * - Solana: Base58, no 0x prefix, typically 32-44 chars
    */
   _detectAddressType(address: string): 'sui' | 'evm' | 'solana' {
-    console.log('Detecting address type for:', address);
-
     if (address.startsWith('0x')) {
       // Remove 0x prefix and check length
       const hexPart = address.slice(2);
-      console.log('Hex part length:', hexPart.length);
 
       if (hexPart.length === 64) {
-        console.log('Detected as SUI');
         return 'sui'; // 32 bytes = 64 hex chars
       } else if (hexPart.length === 40) {
-        console.log('Detected as EVM');
         return 'evm'; // 20 bytes = 40 hex chars
       } else {
         // If 0x prefix but unusual length, assume Sui (more likely)
-        console.log('0x prefix but unusual length, defaulting to SUI');
         return 'sui';
       }
     }
     // Solana addresses are Base58 encoded and don't start with 0x
-    console.log('Detected as Solana');
     return 'solana';
   }
 
@@ -142,15 +152,13 @@ export class Character {
   _createAddressLabel(address: string) {
     // Detect address type
     const addressType = this._detectAddressType(address);
-    console.log('Address type:', addressType, 'Is current player:', this._isCurrentPlayer);
 
     // Display address with type prefix
-    const typeLabel = addressType.toUpperCase();
+    const typeLabel = typeof addressType === 'string' ? addressType.toUpperCase() : 'UNKNOWN';
     const displayAddress = `[${typeLabel}] ${address}`;
 
     // Get gradient colors
     const [startColor, endColor] = this._getAddressGradientColors(addressType);
-    console.log('Gradient colors:', startColor.toString(16), 'to', endColor.toString(16));
 
     // Create text first to measure its dimensions
     const textStyle = {
@@ -176,7 +184,6 @@ export class Character {
     // Use fillStyle for solid background (more reliable than fillGradientStyle)
     // We'll use startColor as the main color
     this._addressLabelBackground.fillStyle(startColor, 1.0);
-    console.log('Drawing background with color:', startColor.toString(16));
 
     // Draw rounded rectangle
     this._addressLabelBackground.fillRoundedRect(-bgWidth / 2, -bgHeight / 2, bgWidth, bgHeight, borderRadius);
@@ -205,6 +212,12 @@ export class Character {
         this._phaserGameObject.x,
         this._phaserGameObject.y - 20, // Reduced from -35 to -20
       );
+    }
+  }
+
+  setAddressLabelVisible(visible: boolean) {
+    if (this._addressLabelContainer) {
+      this._addressLabelContainer.setVisible(visible);
     }
   }
 
@@ -240,7 +253,34 @@ export class Character {
   }
 
   get isChainMovementPending(): boolean {
-    return this._isChainMovementPending;
+    return this._pendingChainMovements > 0;
+  }
+
+  shouldIgnoreAuthoritativePosition(position: Coordinate): boolean {
+    const matchesTarget = this._targetPosition.x === position.x && this._targetPosition.y === position.y;
+    if (matchesTarget) {
+      return false;
+    }
+
+    if (this._isMoving || this.isChainMovementPending) {
+      return true;
+    }
+
+    return Date.now() - this._lastLocalMovementAtMs < AUTHORITATIVE_SYNC_GRACE_MS;
+  }
+
+  _emitMovementStage(summary: string, detail?: string, source: 'fast_path' | 'submit_ack' | 'system' = 'system') {
+    const feedScene = this._scene as Phaser.Scene & {
+      addTransactionFeedEntry?: (
+        summary: string,
+        detail?: string,
+        source?: 'fast_path' | 'submit_ack' | 'system',
+      ) => void;
+    };
+
+    if (typeof feedScene.addTransactionFeedEntry === 'function') {
+      feedScene.addTransactionFeedEntry(summary, detail, source);
+    }
   }
 
   moveCharacter(direction: Direction) {
@@ -258,13 +298,11 @@ export class Character {
       // 如果场景有_controls.isInputLocked属性并且为true，禁止移动
       const scene = this._phaserGameObject.scene as any;
       if (scene._controls && scene._controls.isInputLocked) {
-        console.log('输入被锁定，禁止移动');
         return;
       }
 
       // 检查场景是否有wildMonsterEncountered标志
       if (typeof scene.isWildMonsterEncountered === 'function' && scene.isWildMonsterEncountered()) {
-        console.log('正在遭遇怪兽，禁止移动');
         return;
       }
     } catch (error) {
@@ -406,8 +444,6 @@ export class Character {
 
     try {
       if (this.dubhe) {
-        this._isChainMovementPending = true;
-
         // Prepare transaction
         const moveUpTx = new Transaction();
         moveUpTx.setGasBudget(10000000);
@@ -429,20 +465,43 @@ export class Character {
         }
 
         // Build transaction
-        console.log('[Character] Building move transaction, direction:', direction, 'schema:', DUBHE_SCHEMA_ID);
+        this._debugLog('Building move transaction', { direction, schema: DUBHE_SCHEMA_ID });
         await this.dubhe.tx.map_system.move_position({
           tx: moveUpTx,
           params: [moveUpTx.object(DUBHE_SCHEMA_ID), moveUpTx.pure.u8(direction)],
           isRaw: true,
         });
 
-        // Get nonce for channel transaction
-        const nonce = await nonceManager.getAndIncrement();
-        console.log('[Character] Using nonce:', nonce, 'for move transaction');
-        console.log('[Character] Transaction data:', JSON.stringify(moveUpTx.getData()));
+        moveUpTx.setSender(walletUtils.getChannelSubmitSenderAddress());
+        const submittedTargetPosition = { ...this._targetPosition };
+        this._lastLocalMovementAtMs = Date.now();
+        this._pendingChainMovements += 1;
+        const targetTileLabel = `${submittedTargetPosition.x},${submittedTargetPosition.y}`;
+        const movementIntentPromise = publishChannelEvent({
+          channelUrl: walletUtils.getChannelUrl(),
+          packageId: PACKAGE_ID,
+          input: {
+            topic: 'movement_intent',
+            partitionKey: walletUtils.getCurrentAccount().address,
+            kind: 'move',
+            payload: {
+              player: walletUtils.getCurrentAccount().address,
+              x: Math.round(submittedTargetPosition.x / TILE_SIZE),
+              y: Math.round(submittedTargetPosition.y / TILE_SIZE),
+              direction: this._direction,
+            },
+            metadata: {
+              player: walletUtils.getCurrentAccount().address,
+              direction: this._direction,
+            },
+          },
+        })
+          .catch(error => {
+            console.warn('[Character] publish movement intent failed:', error);
+          });
 
         // Optimistic update: start animation immediately while transaction processes in background
-        const animationDuration = 200;
+        const animationDuration = LOCAL_PLAYER_MOVE_DURATION_MS;
 
         // Start animation immediately for user feedback
         const animationPromise = new Promise<void>((resolve, reject) => {
@@ -471,6 +530,7 @@ export class Character {
             },
             onComplete: () => {
               this._updateAddressLabelPosition();
+              this._emitMovementStage('fast_path', targetTileLabel, 'fast_path');
               resolve();
             },
           });
@@ -480,33 +540,56 @@ export class Character {
         let transactionSuccess = false;
         const transactionPromise = (async () => {
           try {
-            const submitToChannelRes = await this.dubhe.submitToChannel({
+            const submitToChannelRes = await walletUtils.submitTransactionToChannel({
               tx: moveUpTx,
-              nonce,
+              sender: walletUtils.getChannelSubmitSenderAddress(),
+              dubheClient: this.dubhe,
             });
-            console.log('[Character] submitToChannel result:', submitToChannelRes);
+            this._debugLog('submitToChannel result:', submitToChannelRes);
+            const submitResult = submitToChannelRes as {
+              data?: {
+                tx_digest?: string;
+              };
+            };
+            const txDigest = submitResult.data?.tx_digest;
+            this._emitMovementStage('submit', txDigest ?? 'ok', 'submit_ack');
             transactionSuccess = true;
           } catch (error) {
             console.error('[Character] submitToChannel failed:', error);
+            this._emitMovementStage(
+              'submit_error',
+              error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+              'system',
+            );
             transactionSuccess = false;
+            const isStillAtSubmittedTarget =
+              this._targetPosition.x === submittedTargetPosition.x &&
+              this._targetPosition.y === submittedTargetPosition.y;
+
+            if (isStillAtSubmittedTarget) {
+              this._targetPosition = { ...this._previousTargetPosition };
+              this._phaserGameObject.x = originalPosition.x;
+              this._phaserGameObject.y = originalPosition.y;
+              this._updateAddressLabelPosition();
+            }
+          } finally {
+            this._pendingChainMovements = Math.max(0, this._pendingChainMovements - 1);
           }
         })();
 
-        // Wait for both animation and transaction to complete
-        await Promise.all([animationPromise, transactionPromise]);
+        await animationPromise;
+        this._isMoving = false;
 
-        // Check if transaction was successful
-        if (!transactionSuccess) {
-          // Transaction failed, revert character position
-          console.warn('[Character] Transaction failed, reverting character position');
-          this._phaserGameObject.x = originalPosition.x;
-          this._phaserGameObject.y = originalPosition.y;
-          this._updateAddressLabelPosition();
-          throw new Error('Transaction failed');
+        if (this._spriteGridMovementFinishedCallback) {
+          this._spriteGridMovementFinishedCallback();
         }
+
+        void transactionPromise;
+        void movementIntentPromise;
 
         // Movement successful, update state
         this._previousTargetPosition = { ...this._targetPosition };
+        return;
       } else {
         // If no chain operation, execute animation directly
         await new Promise<void>(resolve => {
@@ -538,6 +621,12 @@ export class Character {
             },
           });
         });
+
+        this._isMoving = false;
+        if (this._spriteGridMovementFinishedCallback) {
+          this._spriteGridMovementFinishedCallback();
+        }
+        return;
       }
     } catch (error) {
       console.error('Movement failed:', error);
@@ -547,9 +636,8 @@ export class Character {
       this._phaserGameObject.x = originalPosition.x;
       this._phaserGameObject.y = originalPosition.y;
       this._updateAddressLabelPosition();
-    } finally {
       this._isMoving = false;
-      this._isChainMovementPending = false;
+      this._pendingChainMovements = 0;
 
       if (this._spriteGridMovementFinishedCallback) {
         this._spriteGridMovementFinishedCallback();

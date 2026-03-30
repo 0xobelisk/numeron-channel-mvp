@@ -104,7 +104,7 @@ export class Player extends Character {
         }
 
         // 只有当链上移动完成且角色未在移动时才允许传送
-        if (!this._isChainMovementPending && !this._isMoving) {
+        if (!this.isChainMovementPending && !this._isMoving) {
           await this.#enterEntranceCallback(entranceName, entranceId, isBuildingEntrance);
         }
       }

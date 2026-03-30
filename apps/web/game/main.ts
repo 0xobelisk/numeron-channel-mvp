@@ -12,6 +12,7 @@ import { InventoryScene } from './scenes/inventory-scene';
 import { CutsceneScene } from './scenes/cutscene-scene';
 import { DialogScene } from './scenes/dialog-scene';
 import { ChatScene } from './scenes/chat-scene';
+import { installDevHarness } from './dev-harness';
 
 export default function StartGame(parent: string) {
   const game = new Phaser.Game({
@@ -41,5 +42,6 @@ export default function StartGame(parent: string) {
   game.scene.add(SCENE_KEYS.DIALOG_SCENE, DialogScene);
   game.scene.add(SCENE_KEYS.CHAT_SCENE, ChatScene);
   game.scene.start(SCENE_KEYS.PRELOAD_SCENE);
+  installDevHarness(game);
   return game;
 }

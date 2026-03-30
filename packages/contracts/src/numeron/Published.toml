@@ -3,10 +3,13 @@
 # This file SHOULD be committed to source control
 
 [published.localnet]
-chain-id = "e9cd7c69"
-published-at = "0x8041ce715dc516da7e67fcc43c0acc853e8f091dae0fd7b11cc5b071016dd614"
-original-id = "0x8041ce715dc516da7e67fcc43c0acc853e8f091dae0fd7b11cc5b071016dd614"
+chain-id = "44282fcc"
+published-at = "0xe6800efcaec328b95dd5fc3aee6f4200afb6a1a918b9905f8032f1d168edbdc4"
+original-id = "0xe6800efcaec328b95dd5fc3aee6f4200afb6a1a918b9905f8032f1d168edbdc4"
 version = 1
+toolchain-version = "1.68.1"
+build-config = { flavor = "sui", edition = "2024" }
+upgrade-capability = "0xf2070aa3141540b501cdca7b19e6a7fb275d1a4f3b95209cc725c909feb89d78"
 
 [published.mainnet]
 chain-id = "35834a8a"
@@ -16,6 +19,6 @@ version = 1
 
 [published.testnet]
 chain-id = "4c78adac"
-published-at = "0x1fb72cbd742c624c3aced8a7d69e60d18b69623c8d221173ba3e85b256db8c8b"
-original-id = "0x1fb72cbd742c624c3aced8a7d69e60d18b69623c8d221173ba3e85b256db8c8b"
+published-at = "0xe1bda746221723baf28023293f484c6aede2ed20ac53d157af00df6524904908"
+original-id = "0xe1bda746221723baf28023293f484c6aede2ed20ac53d157af00df6524904908"
 version = 1

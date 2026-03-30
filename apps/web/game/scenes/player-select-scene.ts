@@ -2,7 +2,7 @@ import { SCENE_KEYS } from './scene-keys';
 import { UI_ASSET_KEYS, TITLE_ASSET_KEYS } from '../assets/asset-keys';
 import { KENNEY_FUTURE_NARROW_FONT_NAME } from '../assets/font-keys';
 import { NineSlice } from '../utils/nine-slice';
-import { dataManager } from '../utils/data-manager';
+import { dataManager, initialState } from '../utils/data-manager';
 import { walletUtils } from '../utils/wallet-utils';
 import { BaseScene } from './base-scene';
 import { DIRECTION } from '../common/direction';
@@ -62,36 +62,31 @@ export class PlayerSelectScene extends BaseScene {
 
     // Create title
     const titleText = this.add
-      .text(this.scale.width / 2, 100, 'Select Player', TITLE_TEXT_STYLE)
+      .text(this.scale.width / 2, 100, 'Browser Player', TITLE_TEXT_STYLE)
       .setOrigin(0.5);
 
     // Create loading text
     this.#loadingText = this.add
-      .text(this.scale.width / 2, 300, 'Loading players...', MENU_TEXT_STYLE)
+      .text(this.scale.width / 2, 300, 'Preparing local session wallet...', MENU_TEXT_STYLE)
       .setOrigin(0.5);
 
-    // Fetch all players
+    // Load the browser-local player identity.
     await this.#loadPlayers();
   }
 
   async #loadPlayers() {
     try {
-      const players = await dataManager.getAllPlayersPositions();
-      console.log('[PlayerSelectScene] Loaded players:', players);
+      const currentPlayer = walletUtils.getCurrentAccount().address;
+      console.log('[PlayerSelectScene] Using browser identity:', currentPlayer);
 
-      if (players.length === 0) {
-        this.#loadingText.setText('No players found!');
-        this.#isLoading = false;
-        return;
-      }
-
-      // Convert players to options
-      this.#playerOptions = players.map((player, index) => ({
-        address: player.player,
-        displayAddress: this.#formatAddress(player.player),
-        x: 0,
-        y: 0,
-      }));
+      this.#playerOptions = [
+        {
+          address: currentPlayer,
+          displayAddress: this.#formatAddress(currentPlayer),
+          x: 0,
+          y: 0,
+        },
+      ];
 
       // Remove loading text
       this.#loadingText.destroy();
@@ -109,7 +104,7 @@ export class PlayerSelectScene extends BaseScene {
   #formatAddress(address: string): string {
     // Detect address type using walletUtils
     const addressType = walletUtils.detectChainType(address);
-    const typeLabel = addressType.toUpperCase();
+    const typeLabel = typeof addressType === 'string' ? addressType.toUpperCase() : 'UNKNOWN';
     
     if (address.length <= 10) {
       return `[${typeLabel}] ${address}`;
@@ -176,7 +171,7 @@ export class PlayerSelectScene extends BaseScene {
       .text(
         this.scale.width / 2,
         200 + menuBgHeight + 30,
-        'Use Arrow Keys to select, Space to confirm',
+        'This browser keeps its own temporary key. Press Space to enter.',
         {
           fontFamily: KENNEY_FUTURE_NARROW_FONT_NAME,
           color: '#FFFFFF',
@@ -193,8 +188,13 @@ export class PlayerSelectScene extends BaseScene {
       // Set the selected player in wallet utils
       walletUtils.setCurrentPlayer(selectedPlayer.address);
 
-      // Start new game
-      dataManager.startNewGame();
+      // Start new game and wait for store hydration before booting world scene.
+      try {
+        await dataManager.startNewGame();
+      } catch (error) {
+        console.error('[PlayerSelectScene] startNewGame failed, falling back to initial state', error);
+        await dataManager.initializeData(initialState);
+      }
 
       // Transition to world scene
       this.scene.start(SCENE_KEYS.WORLD_SCENE);
@@ -245,4 +245,3 @@ export class PlayerSelectScene extends BaseScene {
     });
   }
 }
-

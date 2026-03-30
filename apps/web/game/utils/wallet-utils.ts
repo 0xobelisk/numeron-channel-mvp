@@ -1,8 +1,23 @@
 import { Dubhe, NetworkType, SuiMoveNormalizedModules, Transaction } from '@0xobelisk/sui-client';
-import { NETWORK, PACKAGE_ID } from 'contracts/deployment';
+import { NETWORK, PACKAGE_ID } from '@/config/contractDeployment';
 import { SuiTransactionBlockResponse } from '@0xobelisk/sui-client';
+import { submitChannelTransaction } from '@/lib/channel-events';
+import { DEFAULT_CHANNEL_URL, DEFAULT_NETWORK_ENDPOINT } from '@/lib/channel-config';
+import { getOrCreateBrowserIdentity, setBrowserIdentitySecretKey } from '@/lib/browser-identity';
+import {
+  clearNumeronProxyContext,
+  isNumeronProxyContextActive,
+  readNumeronProxyContext,
+} from '@/lib/proxy-context';
 import contractMetadata from 'contracts/metadata.json';
-import dubheMetadata from 'contracts/dubhe.config.json';
+
+const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
+  ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
+  : process.env.NODE_ENV !== 'production';
+const CHANNEL_NONCE_RETRY_LIMIT = 6;
+const DEFAULT_REGISTER_SENDER_BY_NETWORK: Partial<Record<NetworkType, string>> = {
+  testnet: '0x250409302c664cee7a9b5b21a8c37e9a1806913e028befc6ff85d34eccc6437f',
+};
 
 /**
  * Wallet Utils Class - Provides methods for game interaction with wallet
@@ -17,9 +32,16 @@ class WalletUtils {
     grpc: string;
   };
   #selectedPlayerAddress: string | null = null;
+  #bootstrapAddress: string;
+  #channelUrl: string = DEFAULT_CHANNEL_URL;
+  #registerSenderAddress: string | null =
+    process.env.NEXT_PUBLIC_CHANNEL_REGISTER_SENDER || DEFAULT_REGISTER_SENDER_BY_NETWORK[NETWORK] || null;
+  #channelNonceBySender: Map<string, number> = new Map();
+  #channelSubmitQueueBySender: Map<string, Promise<void>> = new Map();
+  #signingSecretKey: string;
 
   private constructor() {
-    let PRIVATEKEY = process.env.NEXT_PUBLIC_PRIVATE_KEY;
+    const identity = getOrCreateBrowserIdentity();
     if (NETWORK === 'localnet') {
       this.endpoint = {
         http: 'http://127.0.0.1:4000/graphql',
@@ -27,21 +49,36 @@ class WalletUtils {
         grpc: 'http://127.0.0.1:8080',
       };
     } else if (NETWORK === 'testnet') {
-      this.endpoint = {
-        http: 'https://testnet-indexer.numeron.world',
-        ws: 'wss://testnet-indexer.numeron.world',
-        grpc: 'https://testnet-indexer.numeron.world',
-      };
+      this.endpoint = DEFAULT_NETWORK_ENDPOINT;
     }
 
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
-      secretKey: PRIVATEKEY ? PRIVATEKEY : undefined,
+      secretKey: identity.secretKey,
       metadata: contractMetadata as SuiMoveNormalizedModules,
+      channelUrl: this.#channelUrl,
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
+    this.#signingSecretKey = identity.secretKey;
+    this.#bootstrapAddress = identity.address;
+    this.#selectedPlayerAddress = identity.address;
+    this.#restoreStoredProxyContext(identity.address);
+  }
+
+  #restoreStoredProxyContext(proxyAddress: string) {
+    const proxyContext = readNumeronProxyContext();
+    if (!proxyContext) {
+      return;
+    }
+
+    if (!isNumeronProxyContextActive(proxyContext, proxyAddress)) {
+      clearNumeronProxyContext();
+      return;
+    }
+
+    this.#selectedPlayerAddress = proxyContext.ownerAddress;
   }
 
   /**
@@ -54,11 +91,20 @@ class WalletUtils {
     return WalletUtils.instance;
   }
 
+  private debugLog(...args: unknown[]): void {
+    if (!ENABLE_CHANNEL_VERBOSE_LOGS) {
+      return;
+    }
+
+    console.log('[WalletUtils]', ...args);
+  }
+
   /**
    * Get current connected wallet account info
    * @returns Account info object or null (if wallet not connected)
    */
   public getCurrentAccount() {
+    this.ensureBrowserIdentity();
     return {
       address: this.#selectedPlayerAddress || this.dubhe.getAddress(),
       email: '',
@@ -70,8 +116,20 @@ class WalletUtils {
    * @param address The player address to use for transactions
    */
   public setCurrentPlayer(address: string): void {
-    console.log(`[WalletUtils] Setting current player to: ${address}`);
+    this.debugLog(`Setting current player to: ${address}`);
     this.#selectedPlayerAddress = address;
+  }
+
+  public setCurrentPlayerSecretKey(secretKey: string): string {
+    this.debugLog('Switching signer for current player');
+    const identity = setBrowserIdentitySecretKey(secretKey);
+    this.dubhe.updateConfig({ secretKey: identity.secretKey });
+    this.#signingSecretKey = identity.secretKey;
+    this.#bootstrapAddress = identity.address;
+    this.#selectedPlayerAddress = identity.address;
+    this.#restoreStoredProxyContext(identity.address);
+    this.debugLog(`Active signer address: ${identity.address}`);
+    return identity.address;
   }
 
   /**
@@ -82,32 +140,214 @@ class WalletUtils {
     return this.#selectedPlayerAddress;
   }
 
-  /**
-   * Detect chain type from address format
-   * @param address The address to analyze
-   * @returns 'sui' | 'evm' | 'solana'
-   */
-  private detectChainType(address: string): 'sui' | 'evm' | 'solana' {
-    // Remove 0x prefix if present for length checking
+  public getBootstrapAccount() {
+    this.ensureBrowserIdentity();
+    return {
+      address: this.#bootstrapAddress,
+      email: '',
+    };
+  }
+
+  public setRegisterSenderAddress(address: string | null): void {
+    this.#registerSenderAddress = address;
+  }
+
+  public getRegisterSenderAddress(): string {
+    this.ensureBrowserIdentity();
+    return this.#registerSenderAddress || this.#bootstrapAddress;
+  }
+
+  public getCurrentAccountContractKey(): string {
+    const address = this.getCurrentAccount().address;
+    return this.normalizeContractAccountKey(address);
+  }
+
+  public getSignerAddress(): string {
+    this.ensureBrowserIdentity();
+    return this.#bootstrapAddress;
+  }
+
+  public getChannelSubmitSenderAddress(): string {
+    this.ensureBrowserIdentity();
+    const proxyContext = readNumeronProxyContext();
+    if (proxyContext && isNumeronProxyContextActive(proxyContext, this.#bootstrapAddress)) {
+      return this.#bootstrapAddress;
+    }
+
+    return this.getCurrentAccount().address;
+  }
+
+  public resetCurrentPlayerToBootstrap(): string {
+    this.ensureBrowserIdentity();
+    this.#selectedPlayerAddress = this.#bootstrapAddress;
+    return this.#selectedPlayerAddress;
+  }
+
+  public normalizeContractAccountKey(address: string): string {
+    return address.startsWith('0x') ? address.slice(2).toLowerCase() : address;
+  }
+
+  public ensureBrowserIdentity() {
+    const identity = getOrCreateBrowserIdentity();
+    const previousBootstrapAddress = this.#bootstrapAddress;
+
+    if (this.#signingSecretKey !== identity.secretKey) {
+      this.dubhe.updateConfig({ secretKey: identity.secretKey });
+      this.#signingSecretKey = identity.secretKey;
+    }
+
+    this.#bootstrapAddress = identity.address;
+    if (!this.#selectedPlayerAddress || this.#selectedPlayerAddress === previousBootstrapAddress) {
+      this.#selectedPlayerAddress = identity.address;
+    }
+
+    this.#restoreStoredProxyContext(identity.address);
+
+    return identity;
+  }
+
+  public getSigningSecretKey(): string {
+    return this.ensureBrowserIdentity().secretKey;
+  }
+
+  private async reserveChannelNonce(dubheClient: Dubhe, sender: string): Promise<number> {
+    const cachedNonce = this.#channelNonceBySender.get(sender);
+    if (cachedNonce != null) {
+      this.#channelNonceBySender.set(sender, cachedNonce + 1);
+      return cachedNonce;
+    }
+
+    const nextNonce = await dubheClient.latestNonce({ account: sender });
+    this.#channelNonceBySender.set(sender, nextNonce + 1);
+    return nextNonce;
+  }
+
+  private invalidateChannelNonce(sender: string): void {
+    this.#channelNonceBySender.delete(sender);
+  }
+
+  private setChannelNonce(sender: string, nextNonce: number): void {
+    this.#channelNonceBySender.set(sender, nextNonce);
+  }
+
+  private async runSerializedChannelSubmit<T>(sender: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.#channelSubmitQueueBySender.get(sender) || Promise.resolve();
+    let release!: () => void;
+    const lock = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    const next = previous.catch(() => undefined).then(() => lock);
+    this.#channelSubmitQueueBySender.set(sender, next);
+
+    await previous.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      release();
+      if (this.#channelSubmitQueueBySender.get(sender) === next) {
+        this.#channelSubmitQueueBySender.delete(sender);
+      }
+    }
+  }
+
+  private extractExpectedNonce(error: unknown): number | null {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = message.match(/Invalid nonce: expected (\d+), got (\d+)/i);
+    if (!match) {
+      return null;
+    }
+
+    return Number(match[1]);
+  }
+
+  public async submitTransactionToChannel({
+    tx,
+    sender,
+    dubheClient,
+  }: {
+    tx: Transaction;
+    sender?: string;
+    dubheClient?: Dubhe;
+  }) {
+    const client = dubheClient || this.dubhe;
+    const resolvedSender = sender || this.getChannelSubmitSenderAddress();
+    tx.setSender(resolvedSender);
+
+    return this.runSerializedChannelSubmit(resolvedSender, async () => {
+      let lastError: unknown = null;
+
+      for (let attempt = 0; attempt < CHANNEL_NONCE_RETRY_LIMIT; attempt += 1) {
+        const nonce = await this.reserveChannelNonce(client, resolvedSender);
+
+        try {
+          return await submitChannelTransaction({
+            channelUrl: this.getChannelUrl(),
+            chain: this.detectChainType(resolvedSender),
+            sender: resolvedSender,
+            tx,
+            nonce,
+          });
+        } catch (error) {
+          lastError = error;
+          const expectedNonce = this.extractExpectedNonce(error);
+          if (expectedNonce == null) {
+            this.invalidateChannelNonce(resolvedSender);
+            throw error;
+          }
+
+          this.debugLog('Retrying channel submit after nonce mismatch', {
+            sender: resolvedSender,
+            attempt: attempt + 1,
+            expectedNonce,
+            submittedNonce: nonce,
+          });
+          this.setChannelNonce(resolvedSender, expectedNonce);
+
+          await new Promise(resolve => window.setTimeout(resolve, 40 * (attempt + 1)));
+        }
+      }
+
+      this.invalidateChannelNonce(resolvedSender);
+      throw (lastError instanceof Error ? lastError : new Error(String(lastError)));
+    });
+  }
+
+  public setChannelUrl(channelUrl: string): void {
+    this.debugLog(`Setting channel URL to: ${channelUrl}`);
+    this.#channelUrl = channelUrl.replace(/\/$/, '');
+    this.dubhe.updateConfig({ channelUrl: this.#channelUrl });
+  }
+
+  public getChannelUrl(): string {
+    return this.#channelUrl;
+  }
+
+  private shouldSubmitThroughChannel(): boolean {
+    const channelUrl = this.getChannelUrl().toLowerCase();
+    return (
+      process.env.NEXT_PUBLIC_FORCE_CHANNEL_SUBMIT === 'true' ||
+      process.env.NEXT_PUBLIC_ENABLE_NUMERON_DEBUG === 'true' ||
+      channelUrl.startsWith('http://127.0.0.1:') ||
+      channelUrl.startsWith('http://localhost:')
+    );
+  }
+
+  public detectChainType(address: string): 'sui' | 'evm' | 'solana' {
     const cleanAddress = address.startsWith('0x') ? address.slice(2) : address;
 
-    // Sui address: 0x + 64 hex characters (32 bytes)
     if (address.startsWith('0x') && cleanAddress.length === 64 && /^[0-9a-fA-F]+$/.test(cleanAddress)) {
       return 'sui';
     }
 
-    // EVM address: 0x + 40 hex characters (20 bytes)
     if (address.startsWith('0x') && cleanAddress.length === 40 && /^[0-9a-fA-F]+$/.test(cleanAddress)) {
       return 'evm';
     }
 
-    // Solana address: Base58 encoded, typically 32-44 characters, no 0x prefix
-    // Base58 uses characters: 1-9, A-Z, a-z excluding 0, O, I, l
     if (!address.startsWith('0x') && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
       return 'solana';
     }
 
-    // Default to sui if can't determine
     console.warn(`Unable to determine chain type for address: ${address}, defaulting to sui`);
     return 'sui';
   }
@@ -151,54 +391,32 @@ class WalletUtils {
     tx,
     onSuccess,
     onError,
+    channelSender,
   }: {
     tx: Transaction;
     onSuccess?: (result: SuiTransactionBlockResponse) => void;
     onError?: (error: Error) => void;
+    channelSender?: string;
   }): Promise<SuiTransactionBlockResponse | null> {
     try {
-      if (this.network === 'localnet') {
-        // Use selected player address if set, otherwise use dubhe address
-        const sender = this.getCurrentAccount().address;
-        const chain = this.detectChainType(sender);
-        console.log('Detected chain type:', chain, 'for address:', sender);
+      const sender = channelSender || this.getChannelSubmitSenderAddress();
 
-        const nonce = Date.now(); // Use timestamp as nonce
-        const ptb = tx.getData();
-
-        // Prepare API request payload
-        const payload = {
-          chain,
+      if (channelSender || this.shouldSubmitThroughChannel()) {
+        const result = await this.submitTransactionToChannel({
+          tx,
           sender,
-          nonce,
-          ptb,
-          signature: 'base64_encoded_signature_placeholder',
-        };
-
-        console.log('Submitting transaction to API:', payload);
-
-        // Submit transaction via API
-        const response = await fetch(`${this.endpoint.grpc}/submit`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
+          dubheClient: this.dubhe,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`API request failed: ${response.status} ${errorText}`);
-        }
-
-        const result = await response.json();
-        console.log('Transaction submitted successfully:', result);
+        this.debugLog('Transaction submitted successfully:', result);
+        const channelResult = {
+          digest: result.data?.tx_digest ?? '',
+        } as unknown as SuiTransactionBlockResponse;
 
         if (onSuccess) {
-          onSuccess(result);
+          onSuccess(channelResult);
         }
 
-        return result;
+        return channelResult;
       }
 
       // For non-localnet environments, use dubhe client directly
@@ -259,7 +477,7 @@ class WalletUtils {
    */
   public logout(): void {
     // No wallet connection to logout from
-    console.log('Logout not needed');
+    this.debugLog('Logout not needed');
   }
 
   /**
@@ -267,7 +485,7 @@ class WalletUtils {
    */
   public redirectToAuth(): void {
     // No authentication needed
-    console.log('Authentication not needed');
+    this.debugLog('Authentication not needed');
   }
 }
 
