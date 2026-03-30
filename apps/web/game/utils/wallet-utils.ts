@@ -15,6 +15,9 @@ const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
   ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
   : process.env.NODE_ENV !== 'production';
 const CHANNEL_NONCE_RETRY_LIMIT = 6;
+const DEFAULT_REGISTER_SENDER_BY_NETWORK: Partial<Record<NetworkType, string>> = {
+  testnet: '0x250409302c664cee7a9b5b21a8c37e9a1806913e028befc6ff85d34eccc6437f',
+};
 
 /**
  * Wallet Utils Class - Provides methods for game interaction with wallet
@@ -31,7 +34,8 @@ class WalletUtils {
   #selectedPlayerAddress: string | null = null;
   #bootstrapAddress: string;
   #channelUrl: string = DEFAULT_CHANNEL_URL;
-  #registerSenderAddress: string | null = process.env.NEXT_PUBLIC_CHANNEL_REGISTER_SENDER || null;
+  #registerSenderAddress: string | null =
+    process.env.NEXT_PUBLIC_CHANNEL_REGISTER_SENDER || DEFAULT_REGISTER_SENDER_BY_NETWORK[NETWORK] || null;
   #channelNonceBySender: Map<string, number> = new Map();
   #signingSecretKey: string;
 
