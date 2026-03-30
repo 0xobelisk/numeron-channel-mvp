@@ -70,9 +70,15 @@ export class TitleScene extends BaseScene {
       menuBgHeight,
       UI_ASSET_KEYS.MENU_BACKGROUND,
     );
-    const newGameText = this.add.text(menuBgWidth / 2, menuBgHeight / 2, 'Start', MENU_TEXT_STYLE).setOrigin(0.5);
+    const newGameText = this.add
+      .text(menuBgWidth / 2, menuBgHeight / 2, 'Start', MENU_TEXT_STYLE)
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
     const menuContainer = this.add.container(0, 0, [menuBgContainer, newGameText]);
     menuContainer.setPosition(this.scale.width / 2 - menuBgWidth / 2, 300);
+    newGameText.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      this.#startSelectedOption();
+    });
 
     // create cursors
     const cursorX = 150;
@@ -117,10 +123,18 @@ export class TitleScene extends BaseScene {
 
     const wasSpaceKeyPressed = this._controls.wasSpaceKeyPressed();
     if (wasSpaceKeyPressed) {
-      this.cameras.main.fadeOut(500, 0, 0, 0);
-      this._controls.lockInput = true;
+      this.#startSelectedOption();
       return;
     }
+  }
+
+  #startSelectedOption() {
+    if (this._controls.isInputLocked) {
+      return;
+    }
+
+    this.cameras.main.fadeOut(500, 0, 0, 0);
+    this._controls.lockInput = true;
   }
 
   #addInSocialLinks() {

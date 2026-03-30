@@ -1,11 +1,15 @@
 import { Controls } from '../utils/controls';
 import { Dubhe, SuiMoveNormalizedModules } from '@0xobelisk/sui-client';
-import { NETWORK, PACKAGE_ID, DUBHE_SCHEMA_ID } from 'contracts/deployment';
+import { NETWORK, PACKAGE_ID, DUBHE_SCHEMA_ID } from '@/config/contractDeployment';
+import { DEFAULT_CHANNEL_URL } from '@/lib/channel-config';
+import { walletUtils } from '../utils/wallet-utils';
 import contractMetadata from 'contracts/metadata.json';
 
-const CHANNEL_URL =
-  process.env.NEXT_PUBLIC_CHANNEL_URL ||
-  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
+declare global {
+  interface Window {
+    __numeronVirtualControls?: Controls;
+  }
+}
 
 export class BaseScene extends Phaser.Scene {
   _controls: Controls;
@@ -37,6 +41,9 @@ export class BaseScene extends Phaser.Scene {
     this._log(`[${this.constructor.name}:create] invoked`);
 
     this._controls = new Controls(this);
+    if (typeof window !== 'undefined') {
+      window.__numeronVirtualControls = this._controls;
+    }
     this.events.on(Phaser.Scenes.Events.RESUME, this.handleSceneResume, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.handleSceneCleanup, this);
 
@@ -44,8 +51,8 @@ export class BaseScene extends Phaser.Scene {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY,
-      channelUrl: CHANNEL_URL
+      secretKey: walletUtils.getSigningSecretKey(),
+      channelUrl: DEFAULT_CHANNEL_URL,
     });
 
     this.scene.bringToTop();
@@ -70,6 +77,10 @@ export class BaseScene extends Phaser.Scene {
 
   handleSceneResume(sys: Phaser.Scenes.Systems, data?: any | undefined) {
     this._controls.lockInput = false;
+    this._controls.resetVirtualInputState();
+    if (typeof window !== 'undefined') {
+      window.__numeronVirtualControls = this._controls;
+    }
     if (data) {
       this._log(`[${this.constructor.name}:handleSceneResume] invoked, data provided: ${JSON.stringify(data)}`);
       return;
@@ -79,6 +90,10 @@ export class BaseScene extends Phaser.Scene {
 
   handleSceneCleanup() {
     this._log(`[${this.constructor.name}:handleSceneCleanup] invoked`);
+    this._controls?.resetVirtualInputState();
+    if (typeof window !== 'undefined' && window.__numeronVirtualControls === this._controls) {
+      delete window.__numeronVirtualControls;
+    }
     this.events.off(Phaser.Scenes.Events.RESUME, this.handleSceneResume, this);
   }
 

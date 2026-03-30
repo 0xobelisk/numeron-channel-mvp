@@ -5,7 +5,8 @@ import { exhaustiveGuard } from '../../utils/guard';
 import { Coordinate } from '../../types/typedef';
 import { Dubhe, SuiTransactionBlockResponse, Transaction, TransactionResult } from '@0xobelisk/sui-client';
 import { walletUtils } from '../../utils/wallet-utils';
-import { DUBHE_SCHEMA_ID } from 'contracts/deployment';
+import { publishChannelEvent } from '@/lib/channel-events';
+import { DUBHE_SCHEMA_ID, PACKAGE_ID } from '@/config/contractDeployment';
 
 const LOCAL_PLAYER_MOVE_DURATION_MS = Number(process.env.NEXT_PUBLIC_FAST_MOVE_DURATION_MS || 48);
 const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
@@ -150,7 +151,7 @@ export class Character {
     const addressType = this._detectAddressType(address);
 
     // Display address with type prefix
-    const typeLabel = addressType.toUpperCase();
+    const typeLabel = typeof addressType === 'string' ? addressType.toUpperCase() : 'UNKNOWN';
     const displayAddress = `[${typeLabel}] ${address}`;
 
     // Get gradient colors
@@ -208,6 +209,12 @@ export class Character {
         this._phaserGameObject.x,
         this._phaserGameObject.y - 20, // Reduced from -35 to -20
       );
+    }
+  }
+
+  setAddressLabelVisible(visible: boolean) {
+    if (this._addressLabelContainer) {
+      this._addressLabelContainer.setVisible(visible);
     }
   }
 
@@ -453,8 +460,10 @@ export class Character {
         const submittedTargetPosition = { ...this._targetPosition };
         this._pendingChainMovements += 1;
         const targetTileLabel = `${submittedTargetPosition.x},${submittedTargetPosition.y}`;
-        const movementIntentPromise = this.dubhe
-          .publishChannelEvent({
+        const movementIntentPromise = publishChannelEvent({
+          channelUrl: walletUtils.getChannelUrl(),
+          packageId: PACKAGE_ID,
+          input: {
             topic: 'movement_intent',
             partitionKey: walletUtils.getCurrentAccount().address,
             kind: 'move',
@@ -468,7 +477,8 @@ export class Character {
               player: walletUtils.getCurrentAccount().address,
               direction: this._direction,
             },
-          })
+          },
+        })
           .catch(error => {
             console.warn('[Character] publish movement intent failed:', error);
           });
@@ -529,6 +539,11 @@ export class Character {
             transactionSuccess = true;
           } catch (error) {
             console.error('[Character] submitToChannel failed:', error);
+            this._emitMovementStage(
+              'submit_error',
+              error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+              'system',
+            );
             transactionSuccess = false;
             const isStillAtSubmittedTarget =
               this._targetPosition.x === submittedTargetPosition.x &&

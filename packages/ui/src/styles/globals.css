@@ -101,12 +101,143 @@
 
 html,
 body,
+#app,
 .container {
   margin: 0px;
-  height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
   background: #d7d7d7;
+}
+
+@supports not (height: 100dvh) {
+  html,
+  body,
+  #app,
+  .container {
+    height: 100vh;
+  }
+}
+
+.numeron-app {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
+  background: #d7d7d7;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.numeron-game-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.numeron-touch-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-right: calc(14px + env(safe-area-inset-right));
+  padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  padding-left: calc(14px + env(safe-area-inset-left));
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.numeron-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 60px));
+  grid-template-rows: repeat(3, minmax(0, 60px));
+  gap: 8px;
+}
+
+.numeron-dpad-placeholder {
+  width: 60px;
+  height: 60px;
+}
+
+.numeron-action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.numeron-touch-button {
+  pointer-events: auto;
+  width: 60px;
+  height: 60px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(20, 24, 32, 0.45);
+  color: #f4f6fb;
+  font-family: Kenney-Future-Narrow, sans-serif;
+  font-size: 20px;
+  line-height: 1;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+  backdrop-filter: blur(1px);
+}
+
+.numeron-touch-button:active {
+  transform: translateY(1px);
+  background: rgba(40, 52, 78, 0.6);
+}
+
+.numeron-touch-action {
+  width: 64px;
+  height: 64px;
+}
+
+.numeron-rotate-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(7, 10, 17, 0.82);
+  padding: 24px;
+}
+
+.numeron-rotate-card {
+  max-width: 320px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(21, 30, 45, 0.78);
+  color: #f1f6ff;
+  text-align: center;
+  padding: 16px 14px;
+}
+
+.numeron-rotate-card p {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+  font-family: Kenney-Future-Narrow, sans-serif;
+}
+
+.numeron-rotate-card span {
+  margin-top: 8px;
+  display: block;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+@media (pointer: fine) {
+  .numeron-touch-hud,
+  .numeron-rotate-overlay {
+    display: none;
+  }
 }
 
 @font-face {

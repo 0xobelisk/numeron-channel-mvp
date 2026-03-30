@@ -7,17 +7,14 @@ import {
   Transaction,
   bcs,
 } from '@0xobelisk/sui-client';
-import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from 'contracts/deployment';
+import { PACKAGE_ID, NETWORK, DUBHE_SCHEMA_ID } from '@/config/contractDeployment';
 import { InventoryItem, ITEM_EFFECT, ItemCategory, LOCATION_TYPE, Monster } from '@/game/types/typedef';
 import { DATA_MANAGER_STORE_KEYS, PlayerLocation, dataManager } from '@/game/utils/data-manager';
 import { TILE_SIZE } from '@/game/config';
+import { DEFAULT_CHANNEL_URL, DEFAULT_NETWORK_ENDPOINT } from '@/lib/channel-config';
 import contractMetadata from 'contracts/metadata.json';
 import dubheMetadata from 'contracts/dubhe.config.json';
 import { walletUtils } from '@/game/utils/wallet-utils';
-
-const CHANNEL_URL =
-  process.env.NEXT_PUBLIC_CHANNEL_URL ||
-  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
 
 export interface CraftPath {
   id: string;
@@ -51,7 +48,6 @@ export class DubheService {
   #selectedPlayerAddress: string | null = null;
 
   constructor() {
-    let PRIVATEKEY = process.env.NEXT_PUBLIC_PRIVATE_KEY;
     if (NETWORK === 'localnet') {
       this.endpoint = {
         http: 'http://127.0.0.1:4000/graphql',
@@ -59,19 +55,15 @@ export class DubheService {
         grpc: 'http://127.0.0.1:8080',
       };
     } else if (NETWORK === 'testnet') {
-      this.endpoint = {
-        http: 'https://testnet-indexer.numeron.world',
-        ws: 'wss://testnet-indexer.numeron.world',
-        grpc: 'https://testnet-indexer.numeron.world',
-      };
+      this.endpoint = DEFAULT_NETWORK_ENDPOINT;
     }
 
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: PRIVATEKEY,
-      channelUrl: CHANNEL_URL
+      secretKey: walletUtils.getSigningSecretKey(),
+      channelUrl: DEFAULT_CHANNEL_URL,
     });
     this.dubhe = dubhe;
     this.network = NETWORK;
@@ -160,7 +152,7 @@ export class DubheService {
   }
 
   async getPlayerPosition(): Promise<{ x: number; y: number; location: PlayerLocation }> {
-    const account = this.getCurrentAccount().address;
+    const account = walletUtils.getCurrentAccountContractKey();
     let playerPositionData;
     try {
       playerPositionData = await this.dubhe.queryChannelTable({

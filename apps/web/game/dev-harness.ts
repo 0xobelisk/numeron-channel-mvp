@@ -2,6 +2,7 @@ import { dataManager } from './utils/data-manager';
 import { walletUtils } from './utils/wallet-utils';
 import { SCENE_KEYS } from './scenes/scene-keys';
 import { WorldScene } from './scenes/world-scene';
+import { generateBrowserIdentity } from '@/lib/browser-identity';
 
 type DebugDirection = 'LEFT' | 'RIGHT' | 'UP' | 'DOWN';
 
@@ -12,6 +13,14 @@ type DebugFeedEntry = {
   source: string;
   observedAtMs: number;
   displayText: string;
+};
+
+type DebugWorldPlayerState = {
+  x: number;
+  y: number;
+  moving: boolean;
+  chainMovementPending: boolean;
+  direction: unknown;
 };
 
 type MovementPhaseTimings = {
@@ -40,7 +49,20 @@ type MeasureMovePipelineOptions = {
 
 type DebugWorldScene = WorldScene & {
   debugMove?: (direction: DebugDirection) => Promise<unknown>;
+  debugRegisterCurrentPlayer?: (timeoutMs?: number) => Promise<unknown>;
+  debugPrepareForBenchmark?: (timeoutMs?: number) => Promise<unknown>;
+  debugGetAvailableMoveDirections?: (directions?: DebugDirection[]) => DebugDirection[];
   debugState?: () => unknown;
+};
+
+type DebugRegisterProbeResult = {
+  rawAccountKey: string;
+  contractAccountKey: string;
+  submitResult: unknown;
+  rawAccountPosition: unknown;
+  contractAccountPosition: unknown;
+  waitedPosition: unknown;
+  state: DebugState;
 };
 
 type DebugState = {
@@ -51,12 +73,19 @@ type DebugState = {
     scene: string;
     area: string | null;
     currentPlayer: string;
-    player: unknown;
+    player: DebugWorldPlayerState | null;
     otherPlayers: number;
     subscriptionActive: boolean;
     feedEntries: string[];
     feedDebugEntries?: DebugFeedEntry[];
   } | null;
+};
+
+type DebugPlayerIdentity = {
+  address: string;
+  secretKey: string;
+  source: string;
+  state: DebugState;
 };
 
 declare global {
@@ -66,11 +95,18 @@ declare global {
       getActiveSceneKeys: () => string[];
       setChannelUrl: (channelUrl: string) => DebugState;
       getChannelUrl: () => string;
+      getRegisterSenderAddress: () => string;
+      getCurrentPlayerContractKey: () => string;
       setCurrentPlayer: (address: string) => DebugState;
       setCurrentPlayerSecretKey: (secretKey: string) => DebugState;
+      createRandomPlayer: () => DebugPlayerIdentity;
       setRegisterSenderAddress: (address: string | null) => DebugState;
       selectCurrentPlayerAndEnterWorld: () => Promise<DebugState>;
       enterWorldAs: (address: string) => Promise<DebugState>;
+      queryPosition: (account?: string) => Promise<unknown>;
+      registerCurrentPlayer: (timeoutMs?: number) => Promise<DebugRegisterProbeResult>;
+      prepareCurrentPlayerForBenchmark: (timeoutMs?: number) => Promise<DebugState>;
+      getAvailableMoveDirections: (directions?: DebugDirection[]) => DebugDirection[];
       move: (direction: DebugDirection) => Promise<DebugState>;
       waitForFeedEntry: (options?: WaitForFeedEntryOptions) => Promise<{
         entry: DebugFeedEntry;
@@ -121,7 +157,7 @@ function buildDebugState(game: Phaser.Game): DebugState {
   };
 }
 
-async function waitForWorldReady(game: Phaser.Game, timeoutMs = 10000): Promise<DebugState> {
+async function waitForWorldReady(game: Phaser.Game, timeoutMs = 20_000): Promise<DebugState> {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -163,6 +199,61 @@ function findMatchingFeedEntry(state: DebugState, options: WaitForFeedEntryOptio
   });
 }
 
+function didMoveAttemptStart(beforeState: DebugState, afterState: DebugState, afterSequence: number) {
+  const beforePlayer = beforeState.world?.player;
+  const afterPlayer = afterState.world?.player;
+  const newEntries = getFeedDebugEntries(afterState).filter(entry => entry.sequence > afterSequence);
+
+  if (!beforePlayer || !afterPlayer) {
+    return newEntries.length > 0;
+  }
+
+  const positionChanged = beforePlayer.x !== afterPlayer.x || beforePlayer.y !== afterPlayer.y;
+  const movementPending = Boolean(afterPlayer.moving || afterPlayer.chainMovementPending);
+  const movementFeedSeen = newEntries.some(
+    entry =>
+      entry.source === 'fast_path' ||
+      entry.source === 'submit_ack' ||
+      entry.summary === 'submit_error' ||
+      entry.summary === 'register_error',
+  );
+
+  return positionChanged || movementPending || movementFeedSeen;
+}
+
+function shouldTreatMoveTimeoutAsBlockedOrIgnored(
+  beforeState: DebugState,
+  afterState: DebugState,
+  afterSequence: number,
+  detail?: string,
+) {
+  const beforePlayer = beforeState.world?.player;
+  const afterPlayer = afterState.world?.player;
+
+  if (!beforePlayer || !afterPlayer) {
+    return false;
+  }
+
+  const newEntries = getFeedDebugEntries(afterState).filter(entry => entry.sequence > afterSequence);
+  const ownRelevantEntrySeen = newEntries.some(entry => {
+    if (detail && entry.detail !== detail) {
+      return false;
+    }
+
+    return (
+      entry.source === 'fast_path' ||
+      entry.source === 'submit_ack' ||
+      entry.summary === 'position' ||
+      entry.summary === 'submit_error'
+    );
+  });
+
+  const positionUnchanged = beforePlayer.x === afterPlayer.x && beforePlayer.y === afterPlayer.y;
+  const movementIdle = !afterPlayer.moving && !afterPlayer.chainMovementPending;
+
+  return positionUnchanged && movementIdle && !ownRelevantEntrySeen;
+}
+
 function stopSceneIfRunning(game: Phaser.Game, sceneKey: string) {
   if (game.scene.isActive(sceneKey) || game.scene.isSleeping(sceneKey)) {
     game.scene.stop(sceneKey);
@@ -170,7 +261,10 @@ function stopSceneIfRunning(game: Phaser.Game, sceneKey: string) {
 }
 
 export function installDevHarness(game: Phaser.Game) {
-  if (process.env.NODE_ENV === 'production' || typeof window === 'undefined') {
+  const enableDebugHarness =
+    process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_ENABLE_NUMERON_DEBUG === 'true';
+
+  if (!enableDebugHarness || typeof window === 'undefined') {
     return;
   }
 
@@ -242,6 +336,35 @@ export function installDevHarness(game: Phaser.Game) {
     return waitForWorldReady(game);
   };
 
+  const prepareCurrentPlayerForBenchmark = async (timeoutMs = 15_000) => {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const worldScene = getWorldScene(game);
+      if (!worldScene?.debugPrepareForBenchmark) {
+        await new Promise(resolve => window.setTimeout(resolve, 100));
+        continue;
+      }
+
+      try {
+        await worldScene.debugPrepareForBenchmark(timeoutMs);
+        return buildDebugState(game);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          /World player is not initialized yet|World scene is not active yet/.test(error.message)
+        ) {
+          await new Promise(resolve => window.setTimeout(resolve, 100));
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    throw new Error(`Timed out preparing current player for benchmark after ${timeoutMs}ms`);
+  };
+
   window.__numeronDebug = {
     getState: () => buildDebugState(game),
     getActiveSceneKeys: () => game.scene.getScenes(true).map(scene => scene.scene.key),
@@ -249,11 +372,13 @@ export function installDevHarness(game: Phaser.Game) {
       walletUtils.setChannelUrl(channelUrl);
       const worldScene = getWorldScene(game);
       if (worldScene?.dubhe) {
-        worldScene.dubhe.setChannelUrl(channelUrl);
+        worldScene.dubhe.updateConfig({ channelUrl });
       }
       return buildDebugState(game);
     },
     getChannelUrl: () => walletUtils.getChannelUrl(),
+    getRegisterSenderAddress: () => walletUtils.getRegisterSenderAddress(),
+    getCurrentPlayerContractKey: () => walletUtils.getCurrentAccountContractKey(),
     setCurrentPlayer: address => {
       walletUtils.setCurrentPlayer(address);
       return buildDebugState(game);
@@ -262,12 +387,54 @@ export function installDevHarness(game: Phaser.Game) {
       walletUtils.setCurrentPlayerSecretKey(secretKey);
       return buildDebugState(game);
     },
+    createRandomPlayer: () => {
+      const identity = generateBrowserIdentity();
+      walletUtils.setCurrentPlayerSecretKey(identity.secretKey);
+      return {
+        ...identity,
+        state: buildDebugState(game),
+      };
+    },
     setRegisterSenderAddress: address => {
       walletUtils.setRegisterSenderAddress(address);
       return buildDebugState(game);
     },
     selectCurrentPlayerAndEnterWorld: enterWorld,
     enterWorldAs,
+    queryPosition: async account => {
+      return walletUtils.dubhe.queryChannelTable({
+        account: account ?? walletUtils.getCurrentAccountContractKey(),
+        table: 'position',
+        key: [],
+      });
+    },
+    registerCurrentPlayer: async (timeoutMs = 10_000) => {
+      const worldScene = getWorldScene(game);
+      if (!worldScene?.debugRegisterCurrentPlayer) {
+        throw new Error('World scene is not active yet');
+      }
+
+      const result = (await worldScene.debugRegisterCurrentPlayer(timeoutMs)) as Omit<
+        DebugRegisterProbeResult,
+        'state'
+      >;
+
+      return {
+        ...result,
+        state: buildDebugState(game),
+      };
+    },
+    prepareCurrentPlayerForBenchmark,
+    getAvailableMoveDirections: directions => {
+      const worldScene = getWorldScene(game);
+      if (!worldScene?.debugGetAvailableMoveDirections) {
+        throw new Error('World scene is not active yet');
+      }
+
+      return worldScene
+        .debugGetAvailableMoveDirections(directions)
+        .filter((direction): direction is DebugDirection => direction !== 'NONE');
+    },
     move: async direction => {
       const worldScene = getWorldScene(game);
       if (!worldScene?.debugMove) {
@@ -281,8 +448,7 @@ export function installDevHarness(game: Phaser.Game) {
     measureMoveSettlement: async (direction, options = {}) => {
       const beforeState = buildDebugState(game);
       const beforeEntries = getFeedDebugEntries(beforeState);
-      const afterSequence =
-        beforeEntries.length > 0 ? beforeEntries[beforeEntries.length - 1].sequence : 0;
+      const afterSequence = beforeEntries.at(-1)?.sequence ?? 0;
       const start = performance.now();
 
       const worldScene = getWorldScene(game);
@@ -291,14 +457,38 @@ export function installDevHarness(game: Phaser.Game) {
       }
 
       await worldScene.debugMove(direction);
+      const immediateState = buildDebugState(game);
 
-      const { entry, state } = await waitForFeedEntry({
-        afterSequence,
-        source: options.source ?? 'subscription',
-        summaries: options.summaries ?? ['position'],
-        detail: options.detail,
-        timeoutMs: options.timeoutMs,
-      });
+      if (!didMoveAttemptStart(beforeState, immediateState, afterSequence)) {
+        throw new Error(`Move did not start: blocked_or_ignored (${direction})`);
+      }
+
+      let entry;
+      let state;
+
+      try {
+        ({ entry, state } = await waitForFeedEntry({
+          afterSequence,
+          source: options.source ?? 'subscription',
+          summaries: options.summaries ?? ['position'],
+          detail: options.detail,
+          timeoutMs: options.timeoutMs,
+        }));
+      } catch (error) {
+        const finalState = buildDebugState(game);
+        if (
+          shouldTreatMoveTimeoutAsBlockedOrIgnored(
+            beforeState,
+            finalState,
+            afterSequence,
+            options.detail,
+          )
+        ) {
+          throw new Error(`Move did not settle: blocked_or_ignored (${direction})`);
+        }
+
+        throw error;
+      }
 
       return {
         direction,
@@ -311,8 +501,7 @@ export function installDevHarness(game: Phaser.Game) {
     measureMovePipeline: async (direction, options = {}) => {
       const beforeState = buildDebugState(game);
       const beforeEntries = getFeedDebugEntries(beforeState);
-      const afterSequence =
-        beforeEntries.length > 0 ? beforeEntries[beforeEntries.length - 1].sequence : 0;
+      const afterSequence = beforeEntries.at(-1)?.sequence ?? 0;
       const startedAtMs = Date.now();
 
       const worldScene = getWorldScene(game);
@@ -321,6 +510,11 @@ export function installDevHarness(game: Phaser.Game) {
       }
 
       await worldScene.debugMove(direction);
+      const immediateState = buildDebugState(game);
+
+      if (!didMoveAttemptStart(beforeState, immediateState, afterSequence)) {
+        throw new Error(`Move did not start: blocked_or_ignored (${direction})`);
+      }
 
       const [fastPathEntry, submitAckEntry, settlementEntry] = await Promise.all([
         waitForOptionalFeedEntry({

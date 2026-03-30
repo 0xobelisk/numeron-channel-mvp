@@ -536,7 +536,7 @@ export class BattleScene extends BaseScene {
                 this.#battleStateMachine.setState(BATTLE_STATES.POST_ATTACK_CHECK);
               });
             });
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
           },
           onError: (error: any) => {
             console.error(`Transaction failed:`, error);
@@ -582,7 +582,7 @@ export class BattleScene extends BaseScene {
           tx,
           onSuccess: async (result: any) => {
             console.log(`Transaction successful:`, result);
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
             fleeSuccess = true;
           },
           onError: (error: any) => {
@@ -792,7 +792,7 @@ export class BattleScene extends BaseScene {
             })();
 
             const waitTxPromise = (async () => {
-              txResponse = await this._dubhe.waitForIndexerTransaction(result.digest);
+              txResponse = await this._dubhe.waitForTransaction(result.digest);
             })();
 
             await Promise.all([animationsPromise, waitTxPromise]);
@@ -918,7 +918,7 @@ export class BattleScene extends BaseScene {
           tx,
           onSuccess: async (result: any) => {
             console.log(`Transaction successful:`, result);
-            await this._dubhe.waitForIndexerTransaction(result.digest);
+            await this._dubhe.waitForTransaction(result.digest);
             fleeSuccess = true;
           },
           onError: (error: any) => {

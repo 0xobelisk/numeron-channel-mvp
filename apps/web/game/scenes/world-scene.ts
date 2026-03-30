@@ -3,7 +3,7 @@ import { SCENE_KEYS } from './scene-keys';
 import { Player } from '../world/characters/player';
 import { DIRECTION, Direction } from '../common/direction';
 import { ENABLE_ZONE_DEBUGGING, TILED_COLLISION_LAYER_ALPHA, TILE_SIZE } from '../config';
-import { DATA_MANAGER_STORE_KEYS, dataManager } from '../utils/data-manager';
+import { DATA_MANAGER_STORE_KEYS, dataManager, initialState } from '../utils/data-manager';
 import {
   getTargetDirectionFromGameObjectPosition,
   getTargetPathToGameObject,
@@ -38,8 +38,8 @@ import {
 } from '../types/typedef';
 import { PlayerLocation } from '../utils/data-manager';
 import { Dubhe, loadMetadata, SuiMoveNormalizedModules, Transaction, bcs, fromHex, toHex } from '@0xobelisk/sui-client';
-import type { ChannelEventEnvelope } from '@0xobelisk/sui-client';
-import { DUBHE_SCHEMA_ID, NETWORK, PACKAGE_ID } from 'contracts/deployment';
+import { buildChannelDappKey, subscribeChannel, type ChannelEventEnvelope } from '@/lib/channel-events';
+import { DUBHE_SCHEMA_ID, NETWORK, PACKAGE_ID } from '@/config/contractDeployment';
 import { ChatScene } from './chat-scene';
 import { MessageType } from './chat-scene';
 import { walletUtils } from '../utils/wallet-utils';
@@ -109,16 +109,86 @@ type TransactionFeedDebugEntry = {
   displayText: string;
 };
 
+function parsePositiveIntEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
+function parseNonNegativeIntEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+}
+
 const IS_DEV_RUNTIME = process.env.NODE_ENV !== 'production';
+const ENABLE_NUMERON_DEBUG = process.env.NEXT_PUBLIC_ENABLE_NUMERON_DEBUG === 'true';
 const ENABLE_TRANSACTION_FEED_UI = process.env.NEXT_PUBLIC_CHANNEL_FEED_UI
   ? process.env.NEXT_PUBLIC_CHANNEL_FEED_UI === 'true'
-  : IS_DEV_RUNTIME;
+  : IS_DEV_RUNTIME || ENABLE_NUMERON_DEBUG;
 const ENABLE_CHANNEL_VERBOSE_LOGS = process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS
   ? process.env.NEXT_PUBLIC_CHANNEL_VERBOSE_LOGS === 'true'
   : IS_DEV_RUNTIME;
-const ENABLE_ITEM_DROPPED_SUBSCRIPTION = process.env.NEXT_PUBLIC_CHANNEL_ITEM_DROPPED === 'true';
+const ENABLE_ITEM_DROPPED_SUBSCRIPTION = process.env.NEXT_PUBLIC_CHANNEL_ITEM_DROPPED
+  ? process.env.NEXT_PUBLIC_CHANNEL_ITEM_DROPPED === 'true'
+  : ENABLE_NUMERON_DEBUG;
 const REMOTE_PLAYER_INTENT_MOVE_DURATION_MS = Number(process.env.NEXT_PUBLIC_REMOTE_INTENT_MOVE_DURATION_MS || 56);
-const CHANNEL_DAPP_KEY = `${PACKAGE_ID.replace(/^0x/, '')}::dapp_key::DappKey`;
+const REMOTE_PLAYER_TTL_MS = parsePositiveIntEnv(process.env.NEXT_PUBLIC_REMOTE_PLAYER_TTL_MS, 20_000);
+const REMOTE_PLAYER_CLEANUP_INTERVAL_MS = parsePositiveIntEnv(
+  process.env.NEXT_PUBLIC_REMOTE_PLAYER_CLEANUP_INTERVAL_MS,
+  1_000,
+);
+const MAX_REMOTE_PLAYERS = parseNonNegativeIntEnv(process.env.NEXT_PUBLIC_MAX_REMOTE_PLAYERS, 16);
+const REMOTE_LABELS_DEFAULT_VISIBLE = process.env.NEXT_PUBLIC_REMOTE_LABELS_DEFAULT_VISIBLE === 'true';
+const REMOTE_LABEL_DISTANCE_TILES = parsePositiveIntEnv(process.env.NEXT_PUBLIC_REMOTE_LABEL_DISTANCE_TILES, 3);
+const REMOTE_LABEL_DISTANCE_PX = REMOTE_LABEL_DISTANCE_TILES * TILE_SIZE;
+const REMOTE_LABEL_DISTANCE_PX_SQUARED = REMOTE_LABEL_DISTANCE_PX * REMOTE_LABEL_DISTANCE_PX;
+const REMOTE_LABEL_VISIBILITY_UPDATE_INTERVAL_MS = parsePositiveIntEnv(
+  process.env.NEXT_PUBLIC_REMOTE_LABEL_UPDATE_INTERVAL_MS,
+  120,
+);
+const CHANNEL_DAPP_KEY = buildChannelDappKey(PACKAGE_ID);
+const REGISTER_POSITION_WAIT_TIMEOUT_MS = 10_000;
+const REGISTER_POSITION_POLL_INTERVAL_MS = 250;
+const REGISTER_SPAWN_POINTS = [
+  { x: 1, y: 1 },
+  { x: 4, y: 1 },
+  { x: 7, y: 1 },
+  { x: 10, y: 1 },
+  { x: 1, y: 2 },
+  { x: 4, y: 2 },
+  { x: 7, y: 2 },
+  { x: 10, y: 2 },
+  { x: 1, y: 4 },
+  { x: 4, y: 4 },
+  { x: 7, y: 4 },
+  { x: 10, y: 4 },
+  { x: 1, y: 5 },
+  { x: 4, y: 5 },
+  { x: 7, y: 5 },
+  { x: 10, y: 5 },
+] as const;
+
+function getRegisterSpawnPoint(accountKey: string) {
+  let hash = 0;
+  for (const char of accountKey.replace(/^0x/, '').toLowerCase()) {
+    hash = (hash * 33 + char.charCodeAt(0)) >>> 0;
+  }
+
+  return REGISTER_SPAWN_POINTS[hash % REGISTER_SPAWN_POINTS.length];
+}
+
+function normalizePlayerAccount(address: string) {
+  return address.replace(/^0x/, '').toLowerCase();
+}
+
+function toCanonicalPlayerAddress(address: string) {
+  return `0x${normalizePlayerAccount(address)}`;
+}
 
 /*
   Our scene will be 16 x 9 (1024 x 576 pixels)
@@ -127,6 +197,7 @@ const CHANNEL_DAPP_KEY = `${PACKAGE_ID.replace(/^0x/, '')}::dapp_key::DappKey`;
 
 export class WorldScene extends BaseScene {
   #player: Player;
+  #collisionLayer: Phaser.Tilemaps.TilemapLayer | null = null;
   #encounterLayers: Phaser.Tilemaps.TilemapLayer[];
   #wildMonsterEncountered: boolean;
   #signLayer: Phaser.Tilemaps.ObjectLayer | undefined;
@@ -152,11 +223,14 @@ export class WorldScene extends BaseScene {
   #encounterZonePlayerIsEntering: Phaser.Tilemaps.TilemapLayer | undefined;
   dubhe: Dubhe;
   schemaId: string;
-  subscription: (() => void) | null;
-  #otherPlayers: Map<string, Player>;
-  #transactionFeedContainer: Phaser.GameObjects.Container;
-  #transactionFeedTexts: Phaser.GameObjects.Text[];
-  #transactionFeedDebugEntries: TransactionFeedDebugEntry[];
+  subscription: (() => void) | null = null;
+  #otherPlayers: Map<string, Player> = new Map();
+  #otherPlayerLastSeenMs: Map<string, number> = new Map();
+  #lastOtherPlayerCleanupAtMs: number = 0;
+  #lastRemoteLabelUpdateAtMs: number = 0;
+  #transactionFeedContainer: Phaser.GameObjects.Container | null = null;
+  #transactionFeedTexts: Phaser.GameObjects.Text[] = [];
+  #transactionFeedDebugEntries: TransactionFeedDebugEntry[] = [];
   #maxFeedItems: number = 8;
   #nextTransactionFeedSequence: number = 1;
 
@@ -179,10 +253,17 @@ export class WorldScene extends BaseScene {
     this.#sceneData = data;
 
     // handle when some of the fields for scene data are not populated, default to values provided, otherwise use safe defaults
-    const area: string = this.#sceneData?.area || dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION).area;
+    const storeLocation = dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION) as
+      | PlayerLocation
+      | undefined;
+    const areaCandidate = this.#sceneData?.area ?? storeLocation?.area ?? initialState.player.location.area;
+    const area =
+      typeof areaCandidate === 'string' && areaCandidate.trim().length > 0
+        ? areaCandidate
+        : initialState.player.location.area;
     let isInterior = this.#sceneData?.isInterior;
     if (isInterior === undefined) {
-      isInterior = dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION).isInterior;
+      isInterior = storeLocation?.isInterior ?? initialState.player.location.isInterior;
     }
     const isPlayerKnockedOut = this.#sceneData?.isPlayerKnockedOut || false;
 
@@ -202,7 +283,11 @@ export class WorldScene extends BaseScene {
       )?.value;
 
       // check to see if the level data we need to load is different and load that map to get player spawn data
-      if (knockOutSpawnLocation !== this.#sceneData.area) {
+      if (
+        typeof knockOutSpawnLocation === 'string' &&
+        knockOutSpawnLocation.trim().length > 0 &&
+        knockOutSpawnLocation !== this.#sceneData.area
+      ) {
         this.#sceneData.area = knockOutSpawnLocation;
         map = this.make.tilemap({ key: `${this.#sceneData.area.toUpperCase()}_LEVEL` });
       }
@@ -241,6 +326,13 @@ export class WorldScene extends BaseScene {
     this.#lastCutSceneEventHandledIndex = -1;
     this.#specialEncounterTileImageGameObjectGroup = undefined;
     this.#encounterZonePlayerIsEntering = undefined;
+    this.#otherPlayers = new Map();
+    this.#otherPlayerLastSeenMs = new Map();
+    this.#lastOtherPlayerCleanupAtMs = 0;
+    this.#lastRemoteLabelUpdateAtMs = 0;
+    this.#transactionFeedTexts = [];
+    this.#transactionFeedDebugEntries = [];
+    this.#nextTransactionFeedSequence = 1;
   }
 
   async create() {
@@ -268,6 +360,7 @@ export class WorldScene extends BaseScene {
       return;
     }
     collisionLayer.setAlpha(TILED_COLLISION_LAYER_ALPHA).setDepth(2);
+    this.#collisionLayer = collisionLayer;
 
     // create interactive layer
     const hasSignLayer = map.getObjectLayer('Sign') !== null;
@@ -289,7 +382,7 @@ export class WorldScene extends BaseScene {
       networkType: NETWORK,
       packageId: PACKAGE_ID,
       metadata: contractMetadata as SuiMoveNormalizedModules,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY,
+      secretKey: walletUtils.getSigningSecretKey(),
       channelUrl,
     });
 
@@ -298,27 +391,27 @@ export class WorldScene extends BaseScene {
     //   player: walletUtils.getCurrentAccount().address,
     // });
     const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+    const currentPlayerContractKey = walletUtils.getCurrentAccountContractKey();
+    let initialLookupFailed = false;
     let have_player;
     try {
       have_player = await walletUtils.dubhe.queryChannelTable({
-        account: currentPlayerAddress,
+        account: currentPlayerContractKey,
         table: 'position',
         key: [],
       });
     } catch (error) {
+      initialLookupFailed = true;
       console.warn('initial player lookup failed, treating player as unregistered', error);
       have_player = null;
     }
 
     this.#debugLog('have_player', have_player);
-    if (!have_player?.message || !have_player?.data?.[0] || !have_player?.data?.[1]) {
+    if (!initialLookupFailed && (!have_player?.message || !have_player?.data?.[0] || !have_player?.data?.[1])) {
       this.#debugLog('registering missing player', currentPlayerAddress);
       await this.registerNewPlayer(dubhe);
-      await new Promise(resolve => window.setTimeout(resolve, 300));
+      await this.#waitForRegisteredPlayerPosition(currentPlayerContractKey);
     }
-    // Subscribe to channel events
-    await this.subscribeToEvents();
-
     // Check if in teleport state
     const isTeleporting = dataManager.store.get('IS_TELEPORTING');
     this.#debugLog('isTeleporting', isTeleporting);
@@ -344,7 +437,7 @@ export class WorldScene extends BaseScene {
     this.#player = new Player({
       scene: this,
       position: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION),
-      direction: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_DIRECTION),
+      direction: dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_DIRECTION) ?? DIRECTION.DOWN,
       collisionLayer: collisionLayer,
       spriteGridMovementFinishedCallback: () => {
         this.#handlePlayerMovementUpdate();
@@ -368,14 +461,15 @@ export class WorldScene extends BaseScene {
 
     // Set depth to ensure player is visible above background
     this.#player.sprite.setDepth(1);
+    this.#player.setAddressLabelVisible(true);
 
     this.cameras.main.startFollow(this.#player.sprite);
 
-    // Initialize other players map
-    this.#otherPlayers = new Map();
-
     // Load and create other players
     await this.#loadOtherPlayers(collisionLayer);
+
+    // Subscribe after world and player state are fully initialized.
+    await this.subscribeToEvents();
 
     // // update our collisions with npcs
     // this.#npcs.forEach(npc => {
@@ -448,12 +542,55 @@ export class WorldScene extends BaseScene {
     // }
   }
 
+  async #waitForRegisteredPlayerPosition(playerAccountKey: string, timeoutMs = REGISTER_POSITION_WAIT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    let consecutiveLookupFailures = 0;
+
+    while (Date.now() < deadline) {
+      try {
+        const playerPosition = await walletUtils.dubhe.queryChannelTable({
+          account: playerAccountKey,
+          table: 'position',
+          key: [],
+        });
+
+        if (playerPosition?.message && playerPosition?.data?.[0] && playerPosition?.data?.[1]) {
+          return playerPosition;
+        }
+        consecutiveLookupFailures = 0;
+      } catch (error) {
+        consecutiveLookupFailures += 1;
+        this.#debugLog('waiting for registered player position', { playerAccountKey, error });
+        if (consecutiveLookupFailures >= 2) {
+          console.warn(
+            `[${WorldScene.name}] Aborting registered player wait after repeated lookup failures for ${playerAccountKey}.`,
+          );
+          return null;
+        }
+      }
+
+      await sleep(REGISTER_POSITION_POLL_INTERVAL_MS, this);
+    }
+
+    console.warn(
+      `[${WorldScene.name}] Timed out waiting for registered player position for ${playerAccountKey}; continuing with fallback spawn.`,
+    );
+    return null;
+  }
+
   async update(time: DOMHighResTimeStamp) {
     if (!this.#player) {
       return;
     }
 
     super.update(time);
+    const nowMs = Date.now();
+
+    if (nowMs - this.#lastOtherPlayerCleanupAtMs >= REMOTE_PLAYER_CLEANUP_INTERVAL_MS) {
+      this.#lastOtherPlayerCleanupAtMs = nowMs;
+      this.#pruneRemotePlayers(nowMs);
+    }
+    this.#updateRemotePlayerLabelVisibility(nowMs);
 
     if (this.#wildMonsterEncountered) {
       // If the player is encountering a monster, only update player state, don't process any input
@@ -581,19 +718,20 @@ export class WorldScene extends BaseScene {
             },
           },
         ),
-        this.dubhe.subscribeChannel(
-          {
+        subscribeChannel<ChannelEventEnvelope>({
+          channelUrl: walletUtils.getChannelUrl(),
+          spec: {
             topics: ['movement_intent'],
             filters: {
               dapp_key: CHANNEL_DAPP_KEY,
             },
             semantics: 'Ephemeral',
           },
-          {
+          handlers: {
             onOpen: () => onOpen('movement_intent'),
             onError,
             onClose,
-            onMessage: (event: ChannelEventEnvelope) => {
+            onMessage: event => {
               const payload = (event.payload ?? {}) as Partial<MovementIntentPayload>;
               const playerAddress =
                 typeof payload.player === 'string'
@@ -617,7 +755,7 @@ export class WorldScene extends BaseScene {
               });
             },
           },
-        ),
+        }),
       ];
 
       if (ENABLE_ITEM_DROPPED_SUBSCRIPTION) {
@@ -689,12 +827,15 @@ export class WorldScene extends BaseScene {
    */
   registerNewPlayer = async (dubhe: Dubhe) => {
     try {
+      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+      const currentPlayerContractKey = walletUtils.getCurrentAccountContractKey();
+      const spawnPoint = getRegisterSpawnPoint(currentPlayerContractKey);
       const registerTx = new Transaction();
       const params = [
         registerTx.object(this._dubheSchemaId),
-        registerTx.pure.string(walletUtils.getCurrentAccount().address),
-        registerTx.pure.u64(1),
-        registerTx.pure.u64(1),
+        registerTx.pure.string(currentPlayerContractKey),
+        registerTx.pure.u64(spawnPoint.x),
+        registerTx.pure.u64(spawnPoint.y),
       ];
       registerTx.setGasBudget(100000000);
       await dubhe.tx.map_system.force_register({
@@ -702,12 +843,24 @@ export class WorldScene extends BaseScene {
         params,
         isRaw: true,
       });
-      await walletUtils.signAndExecuteTransaction({
+      this.addTransactionFeedEntry(
+        'register_intent',
+        `${currentPlayerAddress} -> ${currentPlayerContractKey} @ ${spawnPoint.x},${spawnPoint.y}`,
+        'system',
+      );
+      return await walletUtils.signAndExecuteTransaction({
         tx: registerTx,
         channelSender: walletUtils.getRegisterSenderAddress(),
-        onSuccess: async result => {},
+        onSuccess: async result => {
+          this.addTransactionFeedEntry('register_submit', result.digest ?? 'ok', 'submit_ack');
+        },
         onError: error => {
           console.error('Failed to register player:', error);
+          this.addTransactionFeedEntry(
+            'register_error',
+            error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+            'system',
+          );
         },
       });
     } catch (error) {
@@ -904,9 +1057,11 @@ export class WorldScene extends BaseScene {
   }
 
   #isPlayerInputLocked(): boolean {
+    const isDialogVisible = this.#dialogUi ? this.#dialogUi.isVisible : false;
+
     return (
       this._controls.isInputLocked ||
-      this.#dialogUi.isVisible ||
+      isDialogVisible ||
       this.#isProcessingNpcEvent ||
       this.#currentCutSceneId !== undefined
     );
@@ -979,44 +1134,174 @@ export class WorldScene extends BaseScene {
     // dataManager.store.set(DATA_MANAGER_STORE_KEYS.MONSTERS_IN_PARTY, monsters);
   }
 
+  #trackOtherPlayerActivity(playerAddress: string, observedAtMs = Date.now()) {
+    this.#otherPlayerLastSeenMs.set(playerAddress, observedAtMs);
+  }
+
+  #removeOtherPlayer(playerAddress: string, reason: 'ttl_expired' | 'cap_exceeded' | 'invalid_entry') {
+    const existingPlayer = this.#otherPlayers.get(playerAddress);
+    if (existingPlayer) {
+      existingPlayer.destroy();
+      this.#otherPlayers.delete(playerAddress);
+    }
+    this.#otherPlayerLastSeenMs.delete(playerAddress);
+    this.#debugLog(`Removed remote player (${reason}): ${playerAddress}`);
+  }
+
+  #clearOtherPlayers(reason: 'ttl_expired' | 'cap_exceeded' | 'invalid_entry') {
+    for (const playerAddress of this.#otherPlayers.keys()) {
+      this.#removeOtherPlayer(playerAddress, reason);
+    }
+  }
+
+  #pruneRemotePlayers(nowMs: number) {
+    if (!this.#otherPlayers || this.#otherPlayers.size === 0) {
+      return;
+    }
+
+    if (MAX_REMOTE_PLAYERS === 0) {
+      this.#clearOtherPlayers('cap_exceeded');
+      return;
+    }
+
+    for (const [address, lastSeenMs] of this.#otherPlayerLastSeenMs.entries()) {
+      if (!this.#otherPlayers.has(address)) {
+        this.#otherPlayerLastSeenMs.delete(address);
+        continue;
+      }
+
+      if (nowMs - lastSeenMs > REMOTE_PLAYER_TTL_MS) {
+        this.#removeOtherPlayer(address, 'ttl_expired');
+      }
+    }
+
+    if (this.#otherPlayers.size <= MAX_REMOTE_PLAYERS) {
+      return;
+    }
+
+    const playerSprite = this.#player?.sprite;
+    const rankedPlayers = Array.from(this.#otherPlayers.entries()).map(([address, otherPlayer]) => {
+      const lastSeenMs = this.#otherPlayerLastSeenMs.get(address) ?? 0;
+      const distanceSquared = playerSprite
+        ? Phaser.Math.Distance.Squared(playerSprite.x, playerSprite.y, otherPlayer.sprite.x, otherPlayer.sprite.y)
+        : Number.POSITIVE_INFINITY;
+
+      return {
+        address,
+        lastSeenMs,
+        distanceSquared,
+      };
+    });
+
+    rankedPlayers.sort((a, b) => {
+      if (a.distanceSquared !== b.distanceSquared) {
+        return a.distanceSquared - b.distanceSquared;
+      }
+      return b.lastSeenMs - a.lastSeenMs;
+    });
+
+    const keepAddresses = new Set(rankedPlayers.slice(0, MAX_REMOTE_PLAYERS).map(item => item.address));
+    for (const rankedPlayer of rankedPlayers) {
+      if (!keepAddresses.has(rankedPlayer.address)) {
+        this.#removeOtherPlayer(rankedPlayer.address, 'cap_exceeded');
+      }
+    }
+  }
+
+  #updateRemotePlayerLabelVisibility(nowMs: number) {
+    if (nowMs - this.#lastRemoteLabelUpdateAtMs < REMOTE_LABEL_VISIBILITY_UPDATE_INTERVAL_MS) {
+      return;
+    }
+    this.#lastRemoteLabelUpdateAtMs = nowMs;
+
+    if (!this.#player) {
+      return;
+    }
+
+    const playerSprite = this.#player.sprite;
+    this.#player.setAddressLabelVisible(true);
+
+    for (const otherPlayer of this.#otherPlayers.values()) {
+      const isWithinLabelRange =
+        Phaser.Math.Distance.Squared(playerSprite.x, playerSprite.y, otherPlayer.sprite.x, otherPlayer.sprite.y) <=
+        REMOTE_LABEL_DISTANCE_PX_SQUARED;
+      otherPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE || isWithinLabelRange);
+    }
+  }
+
   async #loadOtherPlayers(collisionLayer: Phaser.Tilemaps.TilemapLayer) {
     try {
+      if (MAX_REMOTE_PLAYERS === 0) {
+        this.#clearOtherPlayers('cap_exceeded');
+        this.#debugLog('Remote player rendering is disabled by NEXT_PUBLIC_MAX_REMOTE_PLAYERS=0');
+        return;
+      }
+
       const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+      const currentPlayerAccount = normalizePlayerAccount(currentPlayerAddress);
       this.#debugLog('Current player address:', currentPlayerAddress);
 
       const allPlayersPositions = await dataManager.getAllPlayersPositions();
       this.#debugLog('Total players found:', allPlayersPositions.length);
 
-      // Create player sprites for all other players (excluding current player)
+      const currentPlayerPosition = this.#player?.sprite
+        ? { x: this.#player.sprite.x, y: this.#player.sprite.y }
+        : dataManager.store.get(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION);
+      const sortedRemotePlayers = allPlayersPositions
+        .filter(playerPos => normalizePlayerAccount(playerPos.player) !== currentPlayerAccount)
+        .sort((a, b) => {
+          const aX = Number(a?.x);
+          const aY = Number(a?.y);
+          const bX = Number(b?.x);
+          const bY = Number(b?.y);
+
+          const aDistance = Number.isFinite(aX) && Number.isFinite(aY)
+            ? Phaser.Math.Distance.Squared(currentPlayerPosition.x, currentPlayerPosition.y, aX, aY)
+            : Number.POSITIVE_INFINITY;
+          const bDistance = Number.isFinite(bX) && Number.isFinite(bY)
+            ? Phaser.Math.Distance.Squared(currentPlayerPosition.x, currentPlayerPosition.y, bX, bY)
+            : Number.POSITIVE_INFINITY;
+          return aDistance - bDistance;
+        })
+        .slice(0, MAX_REMOTE_PLAYERS);
+
+      // Create player sprites for selected nearby players
       let otherPlayersCount = 0;
-      for (const playerPos of allPlayersPositions) {
-        // Skip current player
-        if (playerPos.player === currentPlayerAddress) {
+      for (const playerPos of sortedRemotePlayers) {
+        const canonicalPlayerAddress = toCanonicalPlayerAddress(playerPos.player);
+        const x = Number(playerPos?.x);
+        const y = Number(playerPos?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          this.#debugLog(`Skipping invalid player position for: ${canonicalPlayerAddress}`);
           continue;
         }
 
         // Create a Player instance for other players
         const otherPlayer = new Player({
           scene: this,
-          position: { x: playerPos.x, y: playerPos.y },
+          position: { x, y },
           direction: DIRECTION.DOWN,
           collisionLayer: collisionLayer,
           otherCharactersToCheckForCollisionsWith: this.#npcs,
           objectsToCheckForCollisionsWith: this.#items,
           entranceLayer: this.#entranceLayer,
           enterEntranceCallback: async () => {}, // Other players don't trigger entrance events
-          playerAddress: playerPos.player,
+          playerAddress: canonicalPlayerAddress,
           isCurrentPlayer: false, // Mark as other player for colored backgrounds
         });
 
         // Set depth to ensure other players are visible
         otherPlayer.sprite.setDepth(1);
+        otherPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE);
 
-        this.#otherPlayers.set(playerPos.player, otherPlayer);
+        this.#otherPlayers.set(canonicalPlayerAddress, otherPlayer);
+        this.#trackOtherPlayerActivity(canonicalPlayerAddress);
         otherPlayersCount++;
-        this.#debugLog(`Created player sprite #${otherPlayersCount} for: ${playerPos.player}`);
+        this.#debugLog(`Created player sprite #${otherPlayersCount} for: ${canonicalPlayerAddress}`);
       }
 
+      this.#pruneRemotePlayers(Date.now());
+      this.#updateRemotePlayerLabelVisibility(Date.now());
       this.#debugLog(`Finished loading ${otherPlayersCount} other players`);
     } catch (error) {
       console.error('Failed to load other players:', error);
@@ -1037,6 +1322,10 @@ export class WorldScene extends BaseScene {
   }
 
   async #handleOtherPlayerMovementIntent(intentData: MovementIntentPayload) {
+    if (MAX_REMOTE_PLAYERS === 0) {
+      return;
+    }
+
     if (!Number.isFinite(intentData.x) || !Number.isFinite(intentData.y)) {
       return;
     }
@@ -1055,17 +1344,35 @@ export class WorldScene extends BaseScene {
     } = {},
   ) {
     try {
-      const authoritative = options.authoritative ?? true;
-      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
-      const playerAddress = positionData.player;
-
-      // Skip if this is the current player
-      if (playerAddress === currentPlayerAddress) {
+      if (MAX_REMOTE_PLAYERS === 0) {
         return;
       }
 
-      const x = Number(positionData.x) * TILE_SIZE;
-      const y = Number(positionData.y) * TILE_SIZE;
+      const authoritative = options.authoritative ?? true;
+      const currentPlayerAddress = walletUtils.getCurrentAccount().address;
+      const currentPlayerAccount = normalizePlayerAccount(currentPlayerAddress);
+      const rawPlayerAddress = typeof positionData?.player === 'string' ? positionData.player : '';
+      if (!rawPlayerAddress) {
+        return;
+      }
+      const playerAddress = toCanonicalPlayerAddress(rawPlayerAddress);
+      const nowMs = Date.now();
+
+      // Skip if this is the current player
+      if (normalizePlayerAccount(playerAddress) === currentPlayerAccount) {
+        return;
+      }
+
+      const tileX = Number(positionData?.x);
+      const tileY = Number(positionData?.y);
+      if (!Number.isFinite(tileX) || !Number.isFinite(tileY)) {
+        return;
+      }
+
+      const x = tileX * TILE_SIZE;
+      const y = tileY * TILE_SIZE;
+      this.#otherPlayers ||= new Map();
+      this.#trackOtherPlayerActivity(playerAddress, nowMs);
 
       // Check if we already have this player
       const existingPlayer = this.#otherPlayers.get(playerAddress);
@@ -1160,7 +1467,10 @@ export class WorldScene extends BaseScene {
         });
       } else {
         // Create new player if they don't exist
-        const collisionLayer = this.#player._collisionLayer;
+        const collisionLayer = this.#player?._collisionLayer ?? this.#collisionLayer;
+        if (!collisionLayer) {
+          return;
+        }
         const newPlayer = new Player({
           scene: this,
           position: { x, y },
@@ -1176,9 +1486,11 @@ export class WorldScene extends BaseScene {
 
         // Set depth to ensure new player is visible
         newPlayer.sprite.setDepth(1);
+        newPlayer.setAddressLabelVisible(REMOTE_LABELS_DEFAULT_VISIBLE);
 
         this.#otherPlayers.set(playerAddress, newPlayer);
         this.#debugLog(`Created new player sprite for: ${playerAddress} at position (${x}, ${y})`);
+        this.#pruneRemotePlayers(nowMs);
       }
     } catch (error) {
       console.error('Failed to update other player position:', error);
@@ -1909,6 +2221,13 @@ export class WorldScene extends BaseScene {
   }
 
   #hideSpecialEncounterTiles() {
+    if (
+      !this.#specialEncounterTileImageGameObjectGroup ||
+      typeof this.#specialEncounterTileImageGameObjectGroup.getChildren !== 'function'
+    ) {
+      return;
+    }
+
     this.#specialEncounterTileImageGameObjectGroup.getChildren().some((child: Phaser.GameObjects.Image) => {
       if (!child.active) {
         return false;
@@ -2038,12 +2357,136 @@ export class WorldScene extends BaseScene {
     return this.debugState();
   }
 
+  async debugRegisterCurrentPlayer(timeoutMs = REGISTER_POSITION_WAIT_TIMEOUT_MS) {
+    const rawAccountKey = walletUtils.getCurrentAccount().address;
+    const contractAccountKey = walletUtils.getCurrentAccountContractKey();
+    const queryPosition = async (account: string) => {
+      try {
+        return await walletUtils.dubhe.queryChannelTable({
+          account,
+          table: 'position',
+          key: [],
+        });
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
+
+    const submitResult = await this.registerNewPlayer(this.dubhe);
+    const rawAccountPosition = await queryPosition(rawAccountKey);
+    const contractAccountPosition = await queryPosition(contractAccountKey);
+    const waitedPosition = await this.#waitForRegisteredPlayerPosition(contractAccountKey, timeoutMs);
+
+    return {
+      rawAccountKey,
+      contractAccountKey,
+      submitResult,
+      rawAccountPosition,
+      contractAccountPosition,
+      waitedPosition,
+      state: this.debugState(),
+    };
+  }
+
+  async debugPrepareForBenchmark(timeoutMs = 5000) {
+    if (!this.#player) {
+      throw new Error('World player is not initialized yet');
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    const finalizeBenchmarkState = () => {
+      this._controls.lockInput = false;
+      this.#isProcessingNpcEvent = false;
+      this.#isProcessingCutSceneEvent = false;
+      this.#npcPlayerIsInteractingWith = undefined;
+      this.#currentCutSceneId = undefined;
+      this.#dialogUi?.hideDialogModal();
+
+      [
+        SCENE_KEYS.TITLE_SCENE,
+        SCENE_KEYS.CUTSCENE_SCENE,
+        SCENE_KEYS.DIALOG_SCENE,
+        SCENE_KEYS.CHAT_SCENE,
+      ].forEach(sceneKey => {
+        if (this.scene.isActive(sceneKey) || this.scene.isSleeping(sceneKey)) {
+          this.scene.stop(sceneKey);
+        }
+      });
+
+      return this.debugState();
+    };
+
+    while (Date.now() < deadline) {
+      if (!this.#dialogUi) {
+        await sleep(100, this);
+        continue;
+      }
+
+      if (!this.#isPlayerInputLocked()) {
+        return finalizeBenchmarkState();
+      }
+
+      await this.#handlePlayerInteraction();
+      await sleep(100, this);
+    }
+
+    return finalizeBenchmarkState();
+  }
+
+  debugGetAvailableMoveDirections(
+    preferredDirections: Direction[] = [DIRECTION.RIGHT, DIRECTION.DOWN, DIRECTION.LEFT, DIRECTION.UP],
+  ) {
+    if (!this.#player) {
+      return [];
+    }
+
+    const playerPosition = {
+      x: this.#player.sprite.x,
+      y: this.#player.sprite.y,
+    };
+
+    return preferredDirections.filter(direction => {
+      if (direction === DIRECTION.NONE) {
+        return false;
+      }
+
+      const targetPosition = getTargetPositionFromGameObjectPositionAndDirection(playerPosition, direction);
+
+      if (this.#collisionLayer) {
+        const collisionTile = this.#collisionLayer.getTileAtWorldXY(targetPosition.x, targetPosition.y, true);
+        if (collisionTile && collisionTile.index !== -1) {
+          return false;
+        }
+      }
+
+      for (const otherPlayer of this.#otherPlayers.values()) {
+        if (otherPlayer.sprite.x === targetPosition.x && otherPlayer.sprite.y === targetPosition.y) {
+          return false;
+        }
+      }
+
+      for (const item of this.#items) {
+        if (item.position.x === targetPosition.x && item.position.y === targetPosition.y) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }
+
   /**
    * Add a transaction or table update to the feed display
    * @param summary - Main label to display
    * @param detail - Optional secondary detail line
    */
   #addTransactionToFeed(summary: string, detail?: string, source: TransactionFeedSource = 'system') {
+    this.#transactionFeedTexts ||= [];
+    this.#transactionFeedDebugEntries ||= [];
+    this.#nextTransactionFeedSequence ||= 1;
+
     const feedWidth = 400;
     const padding = 5;
     const lineHeight = 28;

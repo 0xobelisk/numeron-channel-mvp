@@ -27,13 +27,11 @@ import {
   ItemCategory,
 } from '../types/typedef';
 import { bcs, Dubhe } from '@0xobelisk/sui-client';
-import { NETWORK, PACKAGE_ID } from 'contracts/deployment';
+import { NETWORK, PACKAGE_ID } from '@/config/contractDeployment';
+import { DEFAULT_CHANNEL_URL } from '@/lib/channel-config';
 import { walletUtils } from './wallet-utils';
 
 const LOCAL_STORAGE_KEY = 'MONSTER_TAMER_DATA';
-const CHANNEL_URL =
-  process.env.NEXT_PUBLIC_CHANNEL_URL ||
-  (NETWORK === 'localnet' ? 'http://127.0.0.1:8080' : 'https://testnet-indexer.numeron.world');
 
 export type PlayerLocation = {
   area: string;
@@ -144,19 +142,21 @@ export const DATA_MANAGER_STORE_KEYS = Object.freeze({
 
 class DataManager extends Phaser.Events.EventEmitter {
   #store: Phaser.Data.DataManager;
+  #lastPositionLookupFailedAtMs: number = 0;
+  #positionLookupCooldownMs: number = 2_000;
   dubhe: Dubhe;
   schemaId: string;
 
   constructor() {
     super();
     this.#store = new Phaser.Data.DataManager(this);
-    // initialize state with initial values
-    // this.#updateDataManger(initialState);
+    // Always seed safe defaults so scene bootstrapping never reads undefined fields.
+    this.#updateDataManger(initialState);
     const dubhe = new Dubhe({
       networkType: NETWORK,
       packageId: PACKAGE_ID,
-      secretKey: process.env.NEXT_PUBLIC_PRIVATE_KEY,
-      channelUrl: CHANNEL_URL
+      secretKey: walletUtils.getSigningSecretKey(),
+      channelUrl: DEFAULT_CHANNEL_URL,
     });
     this.dubhe = dubhe;
   }
@@ -377,13 +377,22 @@ class DataManager extends Phaser.Events.EventEmitter {
   }
 
   async updatePlayerPosition(): Promise<{ x: number; y: number; location: PlayerLocation }> {
-    // const playerPosition = await this.dubhe.getStorageItem({
-    //   name: 'position',
-    //   key1: walletUtils.getCurrentAccount().address,
-    // });
+    const storePosition = this.#store.get(DATA_MANAGER_STORE_KEYS.PLAYER_POSITION) as { x: number; y: number } | undefined;
+    const storeLocation = this.#store.get(DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION) as PlayerLocation | undefined;
+    const fallbackPosition = {
+      x: Number.isFinite(storePosition?.x) ? storePosition.x : initialState.player.position.x,
+      y: Number.isFinite(storePosition?.y) ? storePosition.y : initialState.player.position.y,
+      location: storeLocation ?? initialState.player.location,
+    };
 
-    const address = walletUtils.getCurrentAccount().address;
-    console.log('address', address);
+    if (
+      this.#lastPositionLookupFailedAtMs > 0 &&
+      Date.now() - this.#lastPositionLookupFailedAtMs < this.#positionLookupCooldownMs
+    ) {
+      return fallbackPosition;
+    }
+
+    const address = walletUtils.getCurrentAccountContractKey();
     let playerPositionData;
     try {
       playerPositionData = await walletUtils.dubhe.queryChannelTable({
@@ -392,73 +401,57 @@ class DataManager extends Phaser.Events.EventEmitter {
         key: [],
       });
     } catch (error) {
-      console.warn('playerPosition lookup failed, falling back to default spawn', error);
-      return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
+      console.warn('playerPosition lookup failed, falling back to safe spawn', error);
+      this.#lastPositionLookupFailedAtMs = Date.now();
+      return fallbackPosition;
     }
 
-    console.log('playerPositionData', playerPositionData);
+    if (!playerPositionData?.message || !playerPositionData.data?.[0] || !playerPositionData.data?.[1]) {
+      this.#lastPositionLookupFailedAtMs = Date.now();
+      return fallbackPosition;
+    }
 
+    try {
+      const xData = Uint8Array.from(playerPositionData.data[0]);
+      const yData = Uint8Array.from(playerPositionData.data[1]);
+      const x = Number(bcs.u64().parse(xData)) * TILE_SIZE;
+      const y = Number(bcs.u64().parse(yData)) * TILE_SIZE;
 
-
-  // console.log('getTableData', getTableData);
-  if (!playerPositionData?.message || !playerPositionData.data?.[0] || !playerPositionData.data?.[1]) {
-    console.log('=========playerPosition not found');
-    return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
-  }
-
-  const xData = Uint8Array.from(playerPositionData.data[0]);
-  const yData = Uint8Array.from(playerPositionData.data[1]);
-
-  // const parsedStringList = bcs.vector(bcs.u64()).parse(datares);
-  const x = bcs.u64().parse(xData);
-  const y = bcs.u64().parse(yData);
-  console.log('x', x);
-  console.log('y', y);
-
-  const playerPosition = {
-    x,
-    y,
-  };
-    console.log('playerPosition', playerPosition);
-    console.log('walletUtils.getCurrentAccount().address', walletUtils.getCurrentAccount().address);
-
-    if (playerPosition) {
-      this.#store.set({
-        [DATA_MANAGER_STORE_KEYS.PLAYER_POSITION]: {
-          x: Number(playerPosition.x) * TILE_SIZE,
-          y: Number(playerPosition.y) * TILE_SIZE,
-        },
-      });
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        this.#lastPositionLookupFailedAtMs = Date.now();
+        return fallbackPosition;
+      }
 
       this.#store.set({
-        [DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION]: LOCATION_TYPE[0],
+        [DATA_MANAGER_STORE_KEYS.PLAYER_POSITION]: { x, y },
+        [DATA_MANAGER_STORE_KEYS.PLAYER_LOCATION]: initialState.player.location,
       });
+      this.#lastPositionLookupFailedAtMs = 0;
 
       return {
-        x: Number(playerPosition.x) * TILE_SIZE,
-        y: Number(playerPosition.y) * TILE_SIZE,
-        location: LOCATION_TYPE[0],
+        x,
+        y,
+        location: initialState.player.location,
       };
+    } catch (error) {
+      console.warn('playerPosition parse failed, falling back to safe spawn', error);
+      this.#lastPositionLookupFailedAtMs = Date.now();
+      return fallbackPosition;
     }
-    console.log('=========playerPosition not found');
-    return { x: 0, y: 0, location: { area: 'main_1', isInterior: false } };
   }
 
   async getAllPlayersPositions(): Promise<Array<{ player: string; x: number; y: number }>> {
     try {
       // NOTE: Currently using single player query as a temporary solution
       // until multi-player query is supported
-      const currentPlayer = walletUtils.getCurrentAccount().address;
+      const currentPlayer = walletUtils.getCurrentAccountContractKey();
       
       const playerPositionData = await walletUtils.dubhe.queryChannelTable({
         account: currentPlayer,
         table: 'position',
         key: [],
       });
-      console.log('========= getAllPlayersPositions - Raw data:', playerPositionData);
-
-      if (!playerPositionData || !playerPositionData.data) {
-        console.warn('========= No position data found');
+      if (!playerPositionData?.message || !playerPositionData.data?.[0] || !playerPositionData.data?.[1]) {
         return [];
       }
 
@@ -474,8 +467,7 @@ class DataManager extends Phaser.Events.EventEmitter {
         x: Number(x) * TILE_SIZE,
         y: Number(y) * TILE_SIZE,
       }];
-      
-      console.log('========= Processed player positions:', result);
+
       return result;
     } catch (error) {
       console.error('Failed to fetch all players positions:', error);

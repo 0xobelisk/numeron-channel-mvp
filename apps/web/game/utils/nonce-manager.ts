@@ -25,7 +25,9 @@ class NonceManager {
    */
   public async initialize(): Promise<void> {
     try {
-      const latestNonce = await walletUtils.dubhe.latestNonce();
+      const latestNonce = await walletUtils.dubhe.latestNonce({
+        account: walletUtils.getCurrentAccount().address,
+      });
       console.log('[NonceManager] Latest nonce from chain:', latestNonce);
       
       // latestNonce already returns the next acceptable nonce for this sender.
